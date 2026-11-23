@@ -76,7 +76,9 @@ def test_emotion_changes_follow_sentence_order(services: Services) -> None:
     assert order.index("winking") < order.index("Aapki desk buddy.")
 
 
-@pytest.mark.skipif(subprocess.run(["which", "say"], capture_output=True).returncode != 0, reason="needs macOS say")
+@pytest.mark.skipif(
+    subprocess.run(["which", "say"], capture_output=True).returncode != 0, reason="needs macOS say"
+)
 def test_voice_turn_detected_by_vad(services: Services) -> None:
     """Real speech audio (macOS say) → Silero VAD → (fake) STT → reply."""
     with tempfile.TemporaryDirectory() as tmp:

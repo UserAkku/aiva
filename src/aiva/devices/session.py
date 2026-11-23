@@ -66,6 +66,8 @@ class DeviceSession:
         self.codec = DeviceCodec(hello.audio, downlink_frame_ms=60)
         self.state: State = "idle"
         self.listen_mode = "auto"
+        #: the device is in a hands-free session (keeps listening after each reply)
+        self.auto_listen = False
         self.turns = 0
         self.last_user_text = ""
         self.last_reply = ""
@@ -141,8 +143,10 @@ class DeviceSession:
             state = msg.get("state")
             if state == "start":
                 self.listen_mode = msg.get("mode", "auto")
+                self.auto_listen = self.listen_mode in ("auto", "realtime")
                 await self._start_listening()
             elif state == "stop":
+                self.auto_listen = False
                 await self._stop_listening()
             elif state == "detect":
                 await self._on_detect(str(msg.get("text", "")))
@@ -187,11 +191,7 @@ class DeviceSession:
                     await self.aiva("vad", speaking=True)
 
     def _barge_in_enabled(self) -> bool:
-        return (
-            self.services.config.voice.barge_in
-            and self.hello.has_aec
-            and self.listen_mode in ("auto", "realtime")
-        )
+        return self.services.config.voice.barge_in and self.hello.has_aec and self.auto_listen
 
     async def _start_listening(self) -> None:
         if self.state in ("thinking", "speaking"):
@@ -293,7 +293,7 @@ class DeviceSession:
     def _after_speaking(self) -> None:
         self._vad = self._normal_vad
         self._vad.reset()
-        self.set_state("listening" if self.listen_mode in ("auto", "realtime") else "idle")
+        self.set_state("listening" if self.auto_listen else "idle")
 
     async def _run_turn(self, *, audio: bytes | None, text: str | None) -> None:
         services = self.services

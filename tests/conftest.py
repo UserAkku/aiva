@@ -39,7 +39,13 @@ def services(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Servic
     (tmp_path / "config").mkdir()
     shutil.copy(ROOT / "config" / "aiva.yaml", tmp_path / "config" / "aiva.yaml")
     monkeypatch.setenv("AIVA_HOME", str(tmp_path))
-    for env in ("GROQ_API_KEY", "MISTRAL_API_KEY", "GEMINI_API_KEY", "CEREBRAS_API_KEY", "OPENROUTER_API_KEY"):
+    for env in (
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "GEMINI_API_KEY",
+        "CEREBRAS_API_KEY",
+        "OPENROUTER_API_KEY",
+    ):
         monkeypatch.delenv(env, raising=False)
     svc = Services.build(tmp_path)
     svc.config.workspace = str(tmp_path / "workspace")
@@ -48,14 +54,20 @@ def services(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Servic
     # fake LLM through the real router machinery
     dep = DeploymentConfig(id="fake", provider="groq", model="fake-model", priority=1)
     svc.quota.register(dep, has_key=True)
-    svc.router.models = {"fake": GuardedModel(FunctionModel(stream_function=fake_llm_stream, model_name="fake-model"), dep, svc.quota)}
+    svc.router.models = {
+        "fake": GuardedModel(
+            FunctionModel(stream_function=fake_llm_stream, model_name="fake-model"), dep, svc.quota
+        )
+    }
     svc.brain.rebuild()
 
     # fake speech services
     async def transcribe(pcm16: bytes, sample_rate: int = 16000) -> Transcript:
         return Transcript("count from one to five", "en", len(pcm16) / 32000, 5.0, "fake")
 
-    async def tts_stream(text: str, lang: str | None = None, voice: str | None = None) -> AsyncIterator[bytes]:
+    async def tts_stream(
+        text: str, lang: str | None = None, voice: str | None = None
+    ) -> AsyncIterator[bytes]:
         yield struct.pack("<h", 1000) * 1200  # 50 ms of a tiny tone-ish value
 
     monkeypatch.setattr(svc.stt, "transcribe", transcribe)

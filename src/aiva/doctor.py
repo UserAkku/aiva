@@ -86,11 +86,14 @@ async def run_checks(services: Services, *, deep: bool = False) -> list[Check]:
             detail += f"; not found (retired?): {', '.join(missing)}"
         checks.append(Check(f"{label} key", status, detail, "llm"))
     for provider in sorted(used - set(keyed)):
+        info = PROVIDERS[provider]
+        required = provider == "groq"
         checks.append(
             Check(
-                f"{PROVIDERS[provider].label} key",
-                "warn",
-                f"not set — optional backup ({PROVIDERS[provider].signup_url})",
+                f"{info.label} key",
+                "fail" if required else "warn",
+                ("not set — REQUIRED (LLM + speech-to-text): " if required else "not set — optional backup: ")
+                + info.signup_url,
                 "llm",
             )
         )

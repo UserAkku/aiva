@@ -365,11 +365,15 @@ def build_router(services: Services) -> APIRouter:
                 all_voices = await asyncio.wait_for(edge_tts.list_voices(), timeout=10)
             except Exception as exc:
                 raise HTTPException(502, f"could not list voices: {exc}") from exc
-            voices_cache["list"] = [
-                {"name": v["ShortName"], "locale": v["Locale"], "gender": v["Gender"]}
-                for v in all_voices
-                if v["Locale"] in ("hi-IN", "en-IN", "en-US", "en-GB") or "Multilingual" in v["ShortName"]
-            ]
+            order = {"hi-IN": 0, "en-IN": 1}
+            voices_cache["list"] = sorted(
+                (
+                    {"name": v["ShortName"], "locale": v["Locale"], "gender": v["Gender"]}
+                    for v in all_voices
+                    if v["Locale"] in ("hi-IN", "en-IN", "en-US", "en-GB") or "Multilingual" in v["ShortName"]
+                ),
+                key=lambda v: (order.get(v["locale"], 2 if "Multilingual" in v["name"] else 3), v["name"]),
+            )
         return voices_cache["list"]
 
     @api.post("/tts/preview")
