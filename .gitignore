@@ -35,3 +35,6 @@ web/.vite/
 firmware/**/build/
 firmware/**/managed_components/
 firmware/**/sdkconfig.old
+
+# --- local tooling ---
+.claude/
