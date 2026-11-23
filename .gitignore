@@ -32,6 +32,7 @@ web/.vite/
 *.swp
 
 # --- firmware build artefacts (phase 2) ---
+firmware/xiaozhi-esp32/
 firmware/**/build/
 firmware/**/managed_components/
 firmware/**/sdkconfig.old
