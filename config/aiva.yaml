@@ -1,0 +1,116 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  AIVA configuration (non-secret). Secrets (API keys) live in `.env`.
+#  Anything you change from the dashboard is saved to `data/overrides.yaml`
+#  and layered on top of this file, so this file stays a clean default.
+# ─────────────────────────────────────────────────────────────────────────────
+
+assistant:
+  name: AIVA
+  owner_name: ""            # who built AIVA — she will mention you in intros
+  language: hinglish        # hinglish | english | hindi
+  city: ""                  # default city for weather, e.g. "New Delhi"
+  personality: >-
+    playful, warm and witty desk robot; a little dramatic in a cute way;
+    loves jokes; always respectful to teachers and guests
+
+workspace: ~/Documents/AIVA  # PDFs, notes, screenshots AIVA creates go here
+
+server:
+  host: 0.0.0.0              # 0.0.0.0 so the ESP32 on the same Wi-Fi can reach the Mac
+  port: 8000
+  device_token: ""           # optional shared secret the ESP32 must send (Bearer token)
+  open_browser: true
+
+# ── LLM routing ──────────────────────────────────────────────────────────────
+# Every deployment is (provider, model) with its FREE-tier limits.
+# The quota-aware router picks the healthiest deployment before each request
+# (lower `priority` = preferred) and fails over instantly on 429/5xx/timeouts.
+# Deployments whose API key is missing are skipped automatically.
+llm:
+  max_output_tokens: 450
+  temperature: 0.7
+  history_turns: 6           # conversation turns kept in context (token budget!)
+  first_token_timeout_s: 6   # no first token in time -> fail over to next provider
+  warn_at: [0.25, 0.10]      # speak a warning when remaining daily quota crosses these
+  deployments:
+    - id: groq-gpt-oss-120b
+      provider: groq
+      model: openai/gpt-oss-120b
+      priority: 10
+      limits: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 }
+      settings: { groq_reasoning_effort: low, groq_reasoning_format: hidden }
+
+    - id: groq-qwen3.8-27b
+      provider: groq
+      model: qwen/qwen3.8-27b
+      priority: 20
+      limits: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 }
+      settings: { groq_reasoning_effort: none, groq_reasoning_format: hidden }
+
+    - id: mistral-medium
+      provider: mistral
+      model: mistral-medium-latest
+      priority: 30
+      limits: { rpm: 60, tpm: 500000 }
+
+    - id: groq-gpt-oss-20b
+      provider: groq
+      model: openai/gpt-oss-20b
+      priority: 40
+      limits: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 }
+      settings: { groq_reasoning_effort: low, groq_reasoning_format: hidden }
+
+    - id: mistral-small
+      provider: mistral
+      model: mistral-small-latest
+      priority: 50
+      limits: { rpm: 60, tpm: 500000 }
+
+    - id: gemini-flash-lite
+      provider: google
+      model: gemini-flash-lite-latest
+      priority: 60
+      limits: { rpm: 10, rpd: 500, tpm: 250000 }
+
+    - id: cerebras-qwen
+      provider: cerebras
+      model: qwen-3.8-27b
+      priority: 15
+      limits: { rpm: 300, tpm: 150000 }
+
+    - id: openrouter-free
+      provider: openrouter
+      model: openai/gpt-oss-120b:free
+      priority: 90
+      limits: { rpm: 20, rpd: 50 }
+
+# ── Speech-to-text ───────────────────────────────────────────────────────────
+stt:
+  provider: groq
+  model: whisper-large-v3-turbo
+  language: ""               # "" = auto-detect (best for Hinglish), or "hi" / "en"
+  # Style hint: nudges Whisper to write Hindi in Devanagari and English in English.
+  prompt: "नमस्ते AIVA! आज का weather कैसा है? Open YouTube and play some music please."
+
+# ── Text-to-speech ───────────────────────────────────────────────────────────
+tts:
+  engine: edge               # edge (free neural voices) | say (offline macOS voices)
+  voice_hindi: hi-IN-SwaraNeural          # used for Hinglish / Hindi replies
+  voice_english: en-IN-NeerjaExpressiveNeural
+  rate: "+6%"
+  pitch: "+8Hz"
+  say_voice_hindi: Lekha     # offline fallback voices (macOS `say`)
+  say_voice_english: Tara
+
+# ── Turn-taking ──────────────────────────────────────────────────────────────
+voice:
+  vad_threshold: 0.55        # Silero speech probability to start a turn
+  min_speech_ms: 250         # ignore blips shorter than this
+  end_silence_ms: 650        # silence that ends your sentence
+  max_utterance_s: 25
+  pre_roll_ms: 300           # audio kept from just before speech starts
+  barge_in: true             # interrupt AIVA by talking (needs echo cancellation)
+  playback_lead_ms: 350      # how far ahead of real-time audio is sent to devices
+
+tools:
+  disabled: []               # tool names to hide from the LLM, e.g. [take_screenshot]

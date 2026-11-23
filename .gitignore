@@ -1,0 +1,37 @@
+# --- secrets: NEVER commit ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- runtime data (db, connector creds, logs, generated files) ---
+data/
+!data/.gitkeep
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# --- web ---
+web/node_modules/
+web/dist/
+web/.vite/
+
+# --- os / editors ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# --- firmware build artefacts (phase 2) ---
+firmware/**/build/
+firmware/**/managed_components/
+firmware/**/sdkconfig.old
