@@ -24,6 +24,7 @@ from pydantic_ai import (
     RunContext,
 )
 from pydantic_ai.capabilities import PrepareTools, ProcessHistory
+from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import RetryPromptPart, TextPart, TextPartDelta
 
 from .deps import AgentDeps
@@ -45,7 +46,23 @@ _ALL_FAILED = {
     "थोड़ी देर बाद फिर try करो।",
     "english": "<sad> Sorry, all my AI providers are busy or today's free limit is used up. Please try again in a bit.",
 }
+_BAD_KEYS = {
+    "hinglish": "<embarrassed> मेरी AI API key reject हो रही है। Dashboard के Connectors page पे key check कर दो।",
+    "english": "<embarrassed> My AI API keys are being rejected. Please check them on the dashboard's Connectors page.",
+}
 _DONE = {"hinglish": "<happy> हो गया!", "english": "<happy> Done!"}
+
+
+def _leaf_errors(exc: BaseException) -> list[BaseException]:
+    """Flatten (nested) exception groups, e.g. pydantic-ai's FallbackExceptionGroup."""
+    if isinstance(exc, BaseExceptionGroup):
+        return [leaf for sub in exc.exceptions for leaf in _leaf_errors(sub)]
+    return [exc]
+
+
+def _all_auth_errors(exc: BaseException) -> bool:
+    leaves = _leaf_errors(exc)
+    return bool(leaves) and all(getattr(e, "status_code", None) in (401, 403) for e in leaves)
 
 
 def _lang(services: Services) -> str:
@@ -136,11 +153,16 @@ class Brain:
                 conversation.record_interrupted(user_text, "".join(reply_parts))
                 raise
             except Exception as exc:
-                logger.exception("brain turn failed")
-                state["error"] = f"{type(exc).__name__}: {exc}"
+                leaves = _leaf_errors(exc)
+                if all(isinstance(e, ModelAPIError) for e in leaves):
+                    logger.error("every LLM deployment failed: {}", "; ".join(str(e)[:120] for e in leaves))
+                else:
+                    logger.exception("brain turn failed")
+                state["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
                 if not reply_parts:
-                    reply_parts.append(_ALL_FAILED[lang])
-                    await queue.put(TextDelta(_ALL_FAILED[lang]))
+                    message = _BAD_KEYS[lang] if _all_auth_errors(exc) else _ALL_FAILED[lang]
+                    reply_parts.append(message)
+                    await queue.put(TextDelta(message))
             finally:
                 state["latency_ms"] = (time.monotonic() - started) * 1000
                 await queue.put(None)

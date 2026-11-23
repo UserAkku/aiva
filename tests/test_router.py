@@ -130,3 +130,25 @@ def test_warnings_fire_once(quota: QuotaGuard) -> None:
     for _ in range(1):
         quota.on_success("a", 10, 10, 100)
     assert all(w.key not in keys for w in quota.pop_warnings())
+
+
+def test_auth_cooldown_cleared_when_reconfigured(quota: QuotaGuard) -> None:
+    dep = DeploymentConfig(id="g", provider="groq", model="m")
+    quota.register(dep, has_key=True)
+    quota.on_failure("g", "auth", "401 invalid key")
+    assert not quota.fits("g", 10)[0]
+    quota.register(dep, has_key=True)  # key fixed on the dashboard → services.reload()
+    assert quota.fits("g", 10)[0]
+    quota.on_failure("g", "rate_limit", "429", retry_after=30)
+    quota.register(dep, has_key=True)
+    assert not quota.fits("g", 10)[0]  # real rate limits are NOT forgiven by a reload
+
+
+def test_all_auth_errors_detection() -> None:
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    from aiva.brain.agent import _all_auth_errors
+
+    auth = [ModelHTTPError(401, "a"), ModelHTTPError(403, "b")]
+    assert _all_auth_errors(ExceptionGroup("all failed", auth))
+    assert not _all_auth_errors(ExceptionGroup("mixed", [*auth, ModelHTTPError(429, "c")]))

@@ -238,6 +238,10 @@ class QuotaGuard:
             dep.limits,
         )
         state.has_key = has_key
+        if state.cooldown_reason.startswith(("auth", "bad_request")):
+            # the key or model id may have just been fixed in the dashboard: try again right away
+            state.cooldown_until, state.cooldown_reason = 0.0, ""
+            state.consecutive_failures = 0
         return state
 
     def active(self) -> list[DeploymentState]:
