@@ -9,16 +9,18 @@ ids, so stale numbers here can't silently break a demo.
 | Provider | Free tier (as researched) | Speed | Notes | Role in AIVA |
 |---|---|---|---|---|
 | **Groq** | Per model: `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b` → 30 RPM, 1K req/day, 8K tokens/min, 200K tokens/day. Cached tokens don't count. Whisper: 20 RPM, 2K req/day, 7.2K audio-s/hour. | Fastest (LPU, 450–1000 tok/s) | Llama 3.x moved to Enterprise-only. Rate-limit headers on every response. | **Primary** LLM (3 models = 3 separate quotas) + **STT** |
-| **Mistral** (Experiment plan) | 1 req/s, 500K tokens/min, very large monthly budget (third-party sources: ~1B/month) | Medium | Phone verification; free-tier data may be used for training. Voxtral STT supports Hindi. | **Main backup** (huge token budget) + STT fallback |
+| **Mistral** (Free mode) | **Measured with a real key, Nov 2026:** `ministral-14b`, `ministral-8b`, `ministral-3b`, `open-mistral-nemo` → 2 req/min *each* (limits are per model), 40K tokens/min; `mistral-small`/`medium` → 0 req/min, `mistral-large` → 403 (pay-as-you-go only). Voxtral STT → 60 req/min. | Medium | Older guides quote "1 req/s, 500K tokens/min" — no longer true for free mode. Free-tier data may be used for training. | Small **emergency LLM backup** + **STT fallback** |
 | **Google Gemini** | Flash-Lite ≈ 10 RPM / 500 req/day; Flash ≈ 5 RPM / 20 req/day (developer reports; Google shows exact limits only in AI Studio) | Medium | Free-tier data may be used to improve products. No rate-limit headers. | Backup |
 | **Cerebras** | No permanent free tier any more: $5 trial credit (30 days) after adding a card; `qwen-3.8-27b` 300 RPM / 150K TPM on the trial | Very fast | | Optional |
 | **OpenRouter** `:free` | 20 RPM, 50 req/day (1000/day after $10 lifetime top-up) | Varies | | Emergency fallback |
 | GitHub Models | Reported retired in 2026 | — | | Not used |
 
 **Decision:** no single free tier survives a 20-minute live demo with tool calls, so AIVA
-pools several and routes by live quota (see ARCHITECTURE.md §3). With Groq + Mistral +
-Gemini keys AIVA has roughly 3,500 requests/day of free capacity, and the token-hungry
-part rides on Mistral's large budget once Groq's per-minute token window is busy.
+pools several and routes by live quota (see ARCHITECTURE.md §3). Measured on the real keys:
+an AIVA request costs ~700–1,200 input tokens, so each Groq model sustains ~5 requests/minute
+and the three Groq models together ~3,000 requests/day; Mistral's free small models add a few
+requests per minute as an emergency reserve, and Gemini Flash-Lite (~500/day) is the best
+extra backup to add.
 
 Sources:
 [Groq rate limits](https://console.groq.com/docs/rate-limits) ·
@@ -26,6 +28,7 @@ Sources:
 [Cerebras rate limits](https://inference-docs.cerebras.ai/support/rate-limits) ·
 [Gemini rate limits](https://ai.google.dev/gemini-api/docs/rate-limits) ·
 [Mistral free tier (help center)](https://help.mistral.ai/en/articles/225174-what-are-the-limits-of-the-free-tier) ·
+[Mistral rate limits & plans](https://help.mistral.ai/en/articles/698531-why-am-i-hitting-api-rate-limits-and-how-do-i-increase-them) ·
 [OpenRouter limits](https://openrouter.ai/docs/api-reference/limits) ·
 [GitHub Models docs](https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models)
 
