@@ -66,7 +66,11 @@ def services(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Servic
         return Transcript("count from one to five", "en", len(pcm16) / 32000, 5.0, "fake")
 
     async def tts_stream(
-        text: str, lang: str | None = None, voice: str | None = None
+        text: str,
+        lang: str | None = None,
+        voice: str | None = None,
+        emotion: str | None = None,
+        engine: str | None = None,
     ) -> AsyncIterator[bytes]:
         yield struct.pack("<h", 1000) * 1200  # 50 ms of a tiny tone-ish value
 

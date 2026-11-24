@@ -4,6 +4,20 @@ import { Button, Card, ErrorNote, Input, PageHeader, StatusDot, Toggle } from ".
 import { api, type Check } from "../lib/api";
 import { useLoad } from "../lib/hooks";
 
+// Bulbul v4 Flash personas (from Sarvam's voice catalog): "enhi" = Hinglish code-mixed
+const SARVAM_VOICES = [
+  "ishita_enhi_companion",
+  "simran_enhi_companion",
+  "shalini_enhi_companion",
+  "sanchita_enhi_companion",
+  "shubh_enhi_companion",
+  "roopa_hi_companion",
+  "suman_hi_companion",
+  "kavya_hi_conversational",
+  "shreya_hi_conversational",
+  "simran_hi_conversation",
+];
+
 const SAMPLE = {
   hindi: "नमस्ते! मैं AIVA हूँ, आपकी desk buddy. आज क्या मज़ेदार करें?",
   english: "Hi! I'm AIVA, your desk buddy. What fun thing shall we do today?",
@@ -96,8 +110,20 @@ export function SettingsPage({ onChange }: { onChange: () => void }) {
         <Card title="Voice" subtitle="Free Microsoft Edge neural voices; offline macOS voices are the automatic fallback.">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Engine">
-              <Select value={form.tts.engine} onChange={(v) => set("tts.engine", v)} options={["edge", "say"]} />
+              <Select
+                value={form.tts.engine}
+                onChange={(v) => set("tts.engine", v)}
+                options={["auto", "sarvam", "edge", "say"]}
+                labels={{ auto: "auto (Sarvam if key, else Edge)", sarvam: "Sarvam Bulbul (most human)", edge: "Edge (free)", say: "macOS (offline)" }}
+              />
             </Field>
+            <VoiceField
+              label="Sarvam voice (Hinglish persona)"
+              value={form.tts.sarvam_speaker}
+              options={SARVAM_VOICES.map((name) => ({ name, locale: "hi-IN", gender: "" }))}
+              sample={SAMPLE.hindi}
+              onChange={(v) => set("tts.sarvam_speaker", v)}
+            />
             <Field label="Speech-to-text language">
               <Select value={form.stt.language} onChange={(v) => set("stt.language", v)} options={["", "hi", "en"]} labels={{ "": "auto (best for Hinglish)" }} />
             </Field>
@@ -122,6 +148,13 @@ export function SettingsPage({ onChange }: { onChange: () => void }) {
               <div className="text-[12px] text-zinc-500">Interrupt AIVA by talking over her (needs echo cancellation).</div>
             </div>
             <Toggle checked={form.voice.barge_in} onChange={(v) => set("voice.barge_in", v)} />
+          </div>
+          <div className="mt-3 flex items-center justify-between">
+            <div>
+              <div className="text-[13px] text-zinc-200">Emotional voice</div>
+              <div className="text-[12px] text-zinc-500">Happy sounds brighter, sad slower and softer, angry louder.</div>
+            </div>
+            <Toggle checked={form.tts.emotion_prosody} onChange={(v) => set("tts.emotion_prosody", v)} />
           </div>
         </Card>
 

@@ -22,7 +22,25 @@ export function ConnectorsPage({ onChange }: { onChange: () => void }) {
       </p>
       {providers.error && <ErrorNote>{providers.error}</ErrorNote>}
       <div className="grid gap-4 lg:grid-cols-2">
-        {providers.data?.map((p) => (
+        {providers.data?.filter((p) => p.kind !== "voice").map((p) => (
+          <ProviderCard
+            key={p.name}
+            provider={p}
+            onChange={() => {
+              void providers.reload();
+              onChange();
+            }}
+          />
+        ))}
+      </div>
+
+      <h2 className="mb-3 mt-10 text-[13px] font-semibold uppercase tracking-wider text-zinc-500">Voice</h2>
+      <p className="mb-4 max-w-3xl text-[13px] text-zinc-400">
+        Without a key AIVA uses free Microsoft Edge voices. Add a free <b className="text-zinc-200">Sarvam</b> key for Indian
+        "companion" voices built for Hinglish — they sound like a real person and change tone with AIVA's emotions.
+      </p>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {providers.data?.filter((p) => p.kind === "voice").map((p) => (
           <ProviderCard
             key={p.name}
             provider={p}

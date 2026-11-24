@@ -141,15 +141,21 @@ async def run_checks(services: Services, *, deep: bool = False) -> list[Check]:
     )
     started = time.monotonic()
     try:
-        pcm = await asyncio.wait_for(services.tts.synthesize("Testing one two three", "en"), timeout=15)
+        pcm = await asyncio.wait_for(
+            services.tts.synthesize("नमस्ते! Testing one two three.", emotion="happy"), timeout=20
+        )
         engine = services.tts.last_engine
         ms = (time.monotonic() - started) * 1000
+        names = {
+            "sarvam": "Sarvam Bulbul (most human)",
+            "edge": "Edge neural voice (free)",
+            "say": "macOS offline voice",
+        }
         checks.append(
             Check(
                 "Text-to-speech",
-                "ok" if engine == "edge" else "warn",
-                f"{engine} voice OK ({ms:.0f} ms)"
-                + ("" if engine == "edge" else " — Edge TTS unreachable, using offline voice"),
+                "ok" if engine in ("sarvam", "edge") else "warn",
+                f"{names.get(engine, engine)} OK ({ms:.0f} ms)",
                 "voice",
             )
             if pcm
@@ -157,6 +163,15 @@ async def run_checks(services: Services, *, deep: bool = False) -> list[Check]:
         )
     except Exception as exc:
         checks.append(Check("Text-to-speech", "fail", str(exc), "voice"))
+    if not secrets.key_for("sarvam"):
+        checks.append(
+            Check(
+                "Human-like voice",
+                "warn",
+                f"add a free Sarvam key for the most natural Hinglish voice: {PROVIDERS['sarvam'].signup_url}",
+                "voice",
+            )
+        )
     checks.append(
         Check(
             "Offline voice (say)",

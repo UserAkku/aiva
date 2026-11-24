@@ -22,6 +22,7 @@ class ProviderInfo:
     #: The default request-window for rate-limit headers that don't name one.
     header_request_window: str = "day"
     header_token_window: str = "minute"
+    kind: str = "llm"  # "llm" or "voice"
 
 
 PROVIDERS: dict[str, ProviderInfo] = {
@@ -68,5 +69,15 @@ PROVIDERS: dict[str, ProviderInfo] = {
         signup_url="https://openrouter.ai/keys",
         models_url="https://openrouter.ai/api/v1/models",
         free_tier=":free models: 20 RPM, 50 req/day (1000/day after $10 lifetime top-up).",
+    ),
+    "sarvam": ProviderInfo(
+        name="sarvam",
+        label="Sarvam AI · Bulbul voice",
+        key_env="SARVAM_API_KEY",
+        signup_url="https://dashboard.sarvam.ai",
+        models_url="",
+        free_tier="The most human Hinglish voice: Bulbul v4 Flash 'companion' personas with emotion-aware "
+        "delivery. Free credits on sign-up (≈₹30 per 10K characters after that).",
+        kind="voice",
     ),
 }

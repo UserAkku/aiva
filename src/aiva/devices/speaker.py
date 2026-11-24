@@ -20,6 +20,7 @@ from loguru import logger
 
 from ..brain.events import FaceEvent
 from ..emotions import Emotion
+from ..text import strip_markdown
 from ..voice.tts import TTSService
 from . import protocol
 from .codec import DeviceCodec
@@ -31,6 +32,7 @@ PREFETCH = 2
 class _Speech:
     text: str
     lang: str | None
+    emotion: str | None = None
     audio: asyncio.Queue[bytes | None] = field(default_factory=asyncio.Queue)
     task: asyncio.Task[None] | None = None
 
@@ -64,20 +66,23 @@ class Speaker:
         self._play_until = 0.0
         self._started = False
         self.spoken: list[str] = []
+        self._emotion: str | None = None
         self._tasks: list[asyncio.Task[None]] = []
         self.first_audio_at: float | None = None
         self._runner = asyncio.create_task(self._run(), name=f"speaker-{session_id}")
 
     # ── producer side (called by the session while the brain streams) ─────────
     def say(self, text: str, lang: str | None = None) -> None:
-        if not text.strip():
+        text = strip_markdown(text)
+        if not text:
             return
-        item = _Speech(text.strip(), lang)
+        item = _Speech(text, lang, self._emotion)
         item.task = asyncio.create_task(self._synthesize(item))
         self._tasks.append(item.task)
         self._items.put_nowait(item)
 
     def emotion(self, value: Emotion) -> None:
+        self._emotion = value.value  # sentences queued after this are spoken in this mood
         self._items.put_nowait(_Cue(protocol.emotion(self.session_id, value)))
 
     def face(self, event: FaceEvent) -> None:
@@ -113,7 +118,7 @@ class Speaker:
     async def _synthesize(self, item: _Speech) -> None:
         async with self._prefetch:
             try:
-                async for pcm in self.tts.stream(item.text, item.lang):
+                async for pcm in self.tts.stream(item.text, item.lang, emotion=item.emotion):
                     item.audio.put_nowait(pcm)
             except Exception:
                 logger.exception("TTS failed for {!r}", item.text[:60])

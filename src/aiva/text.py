@@ -28,6 +28,12 @@ def estimate_tokens(text: str) -> int:
     return int((len(text) - deva) / 4 + deva / 2) + 1
 
 
+def strip_markdown(text: str) -> str:
+    """Remove markdown decoration (for captions) but keep the words and emojis."""
+    text = _MD_LINK.sub(r"\1", text)
+    return _SPACES.sub(" ", _MD_SYMBOLS.sub("", text)).strip()
+
+
 def clean_for_tts(text: str) -> str:
     """Make LLM text speakable: drop markdown, URLs and emojis; collapse whitespace."""
     text = _MD_LINK.sub(r"\1", text)

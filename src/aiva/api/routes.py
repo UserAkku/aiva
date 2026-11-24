@@ -148,6 +148,7 @@ def build_router(services: Services) -> APIRouter:
                     "key_hint": _mask(key),
                     "signup_url": info.signup_url,
                     "free_tier": info.free_tier,
+                    "kind": info.kind,
                     "deployments": [
                         {
                             **d.model_dump(),
@@ -166,6 +167,15 @@ def build_router(services: Services) -> APIRouter:
         if provider not in PROVIDERS:
             raise HTTPException(404, "unknown provider")
         services.set_secret(PROVIDER_KEY_ENV[provider][0], body.key.strip())
+        if PROVIDERS[provider].kind == "voice":
+            pcm = await services.tts.synthesize("नमस्ते! मैं AIVA हूँ।", engine=provider, emotion="happy")
+            ok = bool(pcm) and services.tts.last_engine == provider
+            message = (
+                "Voice works — AIVA now speaks with Sarvam."
+                if ok
+                else "Sarvam rejected the key or has no credits (see the server log)."
+            )
+            return {"ok": ok, "message": message}
         from ..doctor import _provider_models
 
         models, message = await _provider_models(provider, body.key.strip())
@@ -378,7 +388,8 @@ def build_router(services: Services) -> APIRouter:
 
     @api.post("/tts/preview")
     async def preview(body: TTSPreview) -> Response:
-        pcm = await services.tts.synthesize(body.text, voice=body.voice)
+        engine = ("edge" if "Neural" in body.voice else "sarvam") if body.voice else None
+        pcm = await services.tts.synthesize(body.text, voice=body.voice, engine=engine, emotion="happy")
         return Response(wav_bytes(pcm, SPEAKER_RATE), media_type="audio/wav")
 
     return api

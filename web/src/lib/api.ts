@@ -30,6 +30,7 @@ export interface Provider {
   key_hint: string | null;
   signup_url: string;
   free_tier: string;
+  kind: "llm" | "voice";
   deployments: Array<{
     id: string;
     model: string;

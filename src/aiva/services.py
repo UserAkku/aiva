@@ -63,7 +63,7 @@ class Services:
             confirmations=ConfirmationGate(),
             scheduler=Scheduler(db, bus),
             stt=STTService(config.stt, secrets, quota, bus),
-            tts=TTSService(config.tts, config.assistant.language),
+            tts=TTSService(config.tts, config.assistant.language, secrets),
             devices=DeviceRegistry(),
         )
         services.brain = Brain(services)
@@ -79,7 +79,7 @@ class Services:
         self.router.reconfigure(self.config, self.secrets)
         self.tools.disabled = set(self.config.tools.disabled)
         self.stt.reconfigure(self.config.stt, self.secrets)
-        self.tts.reconfigure(self.config.tts, self.config.assistant.language)
+        self.tts.reconfigure(self.config.tts, self.config.assistant.language, self.secrets)
         self.connectors.mcp.build()
         self.brain.rebuild()
         self.bus.publish("config.reloaded")

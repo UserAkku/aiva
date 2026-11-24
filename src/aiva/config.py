@@ -90,7 +90,11 @@ class STTConfig(BaseModel):
 
 
 class TTSConfig(BaseModel):
-    engine: Literal["edge", "say"] = "edge"
+    #: auto = Sarvam (most human, needs a key) → Edge (free) → macOS say (offline)
+    engine: Literal["auto", "sarvam", "edge", "say"] = "auto"
+    emotion_prosody: bool = True  # shape pace/pitch/volume by the sentence's emotion
+    sarvam_model: str = "bulbul:v4-flash"
+    sarvam_speaker: str = "ishita_enhi_companion"  # Hinglish "companion" persona
     voice_hindi: str = "hi-IN-SwaraNeural"
     voice_english: str = "en-IN-NeerjaExpressiveNeural"
     rate: str = "+0%"
@@ -139,6 +143,7 @@ PROVIDER_KEY_ENV: dict[str, tuple[str, ...]] = {
     "google": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     "cerebras": ("CEREBRAS_API_KEY",),
     "openrouter": ("OPENROUTER_API_KEY",),
+    "sarvam": ("SARVAM_API_KEY",),
 }
 
 
@@ -153,6 +158,7 @@ class Secrets(BaseSettings):
     google_api_key: SecretStr | None = None
     cerebras_api_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
+    sarvam_api_key: SecretStr | None = None
 
     def key_for(self, provider: str, env_name: str | None = None) -> str | None:
         names = (env_name,) if env_name else PROVIDER_KEY_ENV.get(provider, ())
