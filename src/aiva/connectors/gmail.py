@@ -22,6 +22,7 @@ from typing import Any
 from .store import JsonStore
 
 IMAP_HOST, SMTP_HOST = "imap.gmail.com", "smtp.gmail.com"
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 
 @dataclass(slots=True)
@@ -81,6 +82,54 @@ class GmailConnector:
         self.address = address.strip()
         self._password = re.sub(r"\s+", "", app_password)
         self.store.save("gmail", {"address": self.address, "app_password": self._password})
+
+    @staticmethod
+    def normalise_app_password(raw: str) -> str:
+        """Google App Passwords are exactly 16 letters (shown as 4 groups of 4)."""
+        password = re.sub(r"[\s\-]+", "", raw)
+        if not re.fullmatch(r"[A-Za-z]{16}", password):
+            raise ValueError(
+                "That doesn't look like a Google App Password (it must be exactly 16 letters, like "
+                "'abcd efgh ijkl mnop'). Your normal Gmail password will not work here."
+            )
+        return password.lower()
+
+    @staticmethod
+    def explain(exc: BaseException) -> str:
+        """Turn imaplib/socket errors into advice a person can act on."""
+        text = (
+            exc.args[0].decode(errors="replace") if exc.args and isinstance(exc.args[0], bytes) else str(exc)
+        )
+        lowered = text.lower()
+        if "authenticationfailed" in lowered or "invalid credentials" in lowered:
+            return (
+                "Google rejected the login. Create a NEW App Password while signed in to this same Gmail "
+                "account (2-Step Verification must be ON) and paste exactly those 16 letters."
+            )
+        if "application-specific password" in lowered:
+            return "This account requires an App Password — your normal password won't work."
+        if "web browser" in lowered or "webalert" in lowered:
+            return "Google blocked the sign-in. Open Gmail once in your browser, approve any security prompt, then retry."
+        if isinstance(exc, OSError | TimeoutError):
+            return f"Couldn't reach Gmail ({text}). Check the internet connection."
+        return text
+
+    async def try_connect(self, address: str, app_password: str) -> str:
+        """Test new credentials first; save them only if Gmail accepts them (old ones stay otherwise)."""
+        address = address.strip()
+        if not _EMAIL_RE.fullmatch(address):
+            raise ValueError("Please enter a full Gmail address, e.g. name@gmail.com.")
+        password = self.normalise_app_password(app_password)
+        previous = (self.address, self._password)
+        self.address, self._password = address, password
+        try:
+            message = await self.test()
+        except Exception:
+            self.address, self._password = previous
+            raise
+        self.store.save("gmail", {"address": self.address, "app_password": self._password})
+        self.last_error = None
+        return message
 
     def disconnect(self) -> None:
         self.address = self._password = ""
@@ -202,7 +251,7 @@ class GmailConnector:
         try:
             return await asyncio.to_thread(self.test_sync)
         except Exception as exc:
-            self.last_error = str(exc)
+            self.last_error = self.explain(exc)
             raise
 
     async def inbox(self, unread_only: bool = True, limit: int = 5) -> list[MailSummary]:

@@ -172,6 +172,8 @@ function GmailCard({ data, onChange }: { data?: { configured: boolean; account: 
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const letters = password.replace(/[\s-]/g, "");
+  const appPasswordOk = /^[A-Za-z]{16}$/.test(letters);
 
   const connect = async () => {
     setBusy(true);
@@ -222,12 +224,22 @@ function GmailCard({ data, onChange }: { data?: { configured: boolean; account: 
             </a>{" "}
             and create one named "AIVA".
           </li>
-          <li>Paste your Gmail address and the 16-letter password here.</li>
+          <li>
+            Paste your Gmail address and the <b className="text-zinc-200">16-letter</b> App Password here — not your
+            normal Gmail password. Create it while signed in to the <b className="text-zinc-200">same</b> account.
+          </li>
         </ol>
         <div className="space-y-2">
           <Input placeholder="you@gmail.com" value={address} onChange={(e) => setAddress(e.target.value)} />
           <Input type="password" placeholder="abcd efgh ijkl mnop" value={password} onChange={(e) => setPassword(e.target.value)} />
-          <Button variant="primary" busy={busy} disabled={!address.includes("@") || password.replace(/\s/g, "").length < 16} onClick={() => void connect()}>
+          {password && (
+            <p className={`font-mono text-[11px] ${appPasswordOk ? "text-emerald-300" : "text-amber-300"}`}>
+              {appPasswordOk
+                ? "✓ looks like an App Password"
+                : `${letters.length}/16 letters — an App Password is exactly 16 letters (spaces don't matter)`}
+            </p>
+          )}
+          <Button variant="primary" busy={busy} disabled={!address.includes("@") || !appPasswordOk} onClick={() => void connect()}>
             <CheckCircle2 className="size-4" /> Connect & test
           </Button>
           {msg && <p className={`text-[12.5px] ${msg.ok ? "text-emerald-300" : "text-rose-300"}`}>{msg.text}</p>}

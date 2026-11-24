@@ -15,7 +15,6 @@ import re
 import secrets
 import time
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -284,8 +283,12 @@ class DeviceSession:
         turn, self._turn = self._turn, None
         if turn and not turn.done():
             turn.cancel()
-            with suppress(asyncio.CancelledError):
+            try:
                 await turn
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # e.g. the socket closed mid-sentence
+                logger.debug("turn ended with {!r} while cancelling", exc)
 
     def _new_speaker(self) -> Speaker:
         def first_audio() -> None:

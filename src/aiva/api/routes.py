@@ -226,14 +226,12 @@ def build_router(services: Services) -> APIRouter:
     @api.post("/connectors/gmail")
     async def connect_gmail(body: GmailBody) -> dict[str, Any]:
         gmail = services.connectors.gmail
-        gmail.configure(body.address, body.app_password)
         try:
-            message = await gmail.test()
+            message = await gmail.try_connect(body.address, body.app_password)
+        except ValueError as exc:  # rejected before contacting Google
+            raise HTTPException(400, str(exc)) from exc
         except Exception as exc:
-            gmail.disconnect()
-            raise HTTPException(
-                400, f"Gmail login failed: {exc}. Use an App Password, not your normal password."
-            ) from exc
+            raise HTTPException(400, gmail.explain(exc)) from exc
         services.bus.publish("connector.connected", name="gmail")
         return {"ok": True, "message": message}
 

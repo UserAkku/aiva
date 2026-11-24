@@ -141,7 +141,8 @@ class Speaker:
                 await asyncio.sleep(remaining)
         finally:
             if self._started:
-                await self.send_json(protocol.tts(self.session_id, "stop"))
+                with suppress(Exception):  # the device may already be gone
+                    await self.send_json(protocol.tts(self.session_id, "stop"))
 
     async def _play(self, item: _Speech) -> None:
         announced = False
