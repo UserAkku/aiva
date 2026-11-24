@@ -48,9 +48,17 @@ def build_registry(disabled: list[str] | None = None) -> ToolRegistry:
     )
     reg.category(
         "info",
-        "weather forecast, currency conversion",
+        "weather forecast, air quality (AQI), currency conversion",
         (
             "weather",
+            "aqi",
+            "air quality",
+            "pollution",
+            "smog",
+            "pm2.5",
+            "pradushan",
+            "प्रदूषण",
+            "हवा",
             "mausam",
             "temperature",
             "rain",

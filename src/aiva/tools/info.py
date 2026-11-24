@@ -39,6 +39,54 @@ _WMO = {
 }
 
 
+# CPCB (India) breakpoints: (concentration low, high, AQI low, high)
+_PM25 = [
+    (0, 30, 0, 50),
+    (30, 60, 51, 100),
+    (60, 90, 101, 200),
+    (90, 120, 201, 300),
+    (120, 250, 301, 400),
+    (250, 500, 401, 500),
+]
+_PM10 = [
+    (0, 50, 0, 50),
+    (50, 100, 51, 100),
+    (100, 250, 101, 200),
+    (250, 350, 201, 300),
+    (350, 430, 301, 400),
+    (430, 600, 401, 500),
+]
+_AQI_BANDS = [
+    (50, "Good"),
+    (100, "Satisfactory"),
+    (200, "Moderate"),
+    (300, "Poor"),
+    (400, "Very Poor"),
+    (500, "Severe"),
+]
+
+
+def _sub_index(value: float, table: list[tuple[float, float, int, int]]) -> int:
+    for c_lo, c_hi, i_lo, i_hi in table:
+        if value <= c_hi:
+            return round(i_lo + (value - c_lo) * (i_hi - i_lo) / (c_hi - c_lo))
+    return 500
+
+
+def indian_aqi(pm25: float, pm10: float) -> tuple[int, str]:
+    aqi = max(_sub_index(pm25, _PM25), _sub_index(pm10, _PM10))
+    return aqi, next(label for limit, label in _AQI_BANDS if aqi <= limit) if aqi <= 500 else "Severe"
+
+
+async def _geocode(client: httpx.AsyncClient, city: str) -> dict | None:
+    geo = await client.get(
+        "https://geocoding-api.open-meteo.com/v1/search",
+        params={"name": city, "count": 1, "language": "en", "format": "json"},
+    )
+    places = geo.json().get("results") or []
+    return places[0] if places else None
+
+
 def register(reg: ToolRegistry) -> None:
     @reg.tool("info")
     async def get_weather(ctx: RunContext[AgentDeps], city: str = "", days: int = 1) -> str:
@@ -89,6 +137,39 @@ def register(reg: ToolRegistry) -> None:
                 f"{daily['temperature_2m_max'][i]}°C, rain chance {daily['precipitation_probability_max'][i]}%."
             )
         return "\n".join(lines)
+
+    @reg.tool("info")
+    async def get_air_quality(ctx: RunContext[AgentDeps], city: str = "") -> str:
+        """Live air quality (AQI on India's CPCB scale, PM2.5, PM10) for a city.
+
+        Args:
+            city: City name, e.g. "Delhi". Empty = the default city from settings.
+        """
+        city = city.strip() or ctx.deps.services.config.assistant.city
+        if not city:
+            return "No city given and no default city set. Ask the user which city."
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                place = await _geocode(client, city)
+                if place is None:
+                    return f"Couldn't find a place called {city}."
+                resp = await client.get(
+                    "https://air-quality-api.open-meteo.com/v1/air-quality",
+                    params={
+                        "latitude": place["latitude"],
+                        "longitude": place["longitude"],
+                        "current": "pm2_5,pm10,us_aqi",
+                        "timezone": "auto",
+                    },
+                )
+                cur = resp.json()["current"]
+        except Exception as exc:
+            return f"Air-quality service failed: {exc}"
+        aqi, label = indian_aqi(float(cur["pm2_5"]), float(cur["pm10"]))
+        return (
+            f"{place['name']}: AQI about {aqi} ({label}, India CPCB scale, estimated from current readings); "
+            f"PM2.5 {cur['pm2_5']} µg/m³, PM10 {cur['pm10']} µg/m³, US AQI {cur.get('us_aqi')}."
+        )
 
     @reg.tool("info")
     async def convert_currency(amount: float, from_currency: str, to_currency: str) -> str:
