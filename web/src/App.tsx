@@ -1,7 +1,6 @@
 import clsx from "clsx";
 import { Activity, Brain, Cpu, Gauge, Plug, Radio, Settings, Wrench } from "lucide-react";
 import { type ComponentType, type ReactNode, useEffect, useState } from "react";
-import { StatusDot } from "./components/ui";
 import { DeviceProvider, useDevice } from "./device/DeviceContext";
 import { api, type Status } from "./lib/api";
 import { useLoad } from "./lib/hooks";
@@ -14,7 +13,12 @@ import { SettingsPage } from "./pages/Settings";
 import { ToolsPage } from "./pages/Tools";
 import { UsagePage } from "./pages/Usage";
 
-type Page = { id: string; label: string; icon: ComponentType<{ className?: string }>; render: (status: Status | null, reload: () => void) => ReactNode };
+type Page = {
+  id: string;
+  label: string;
+  icon: ComponentType<{ className?: string }>;
+  render: (status: Status | null, reload: () => void) => ReactNode;
+};
 
 const PAGES: Page[] = [
   { id: "live", label: "Live", icon: Radio, render: (s) => <LivePage status={s} /> },
@@ -38,60 +42,90 @@ function useHashRoute(): string {
   return route;
 }
 
+/** Tiny OLED-face logo mark (two eyes + smile) that glows with the device state. */
+function LogoMark() {
+  return (
+    <div className="relative grid size-10 place-items-center rounded-xl border border-white/10 bg-gradient-to-b from-zinc-800 to-zinc-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+      <div className="flex gap-[5px]">
+        <span className="h-[9px] w-[7px] rounded-[2px] bg-[rgb(var(--state))] shadow-[0_0_8px_rgb(var(--state))] transition-colors duration-500" />
+        <span className="h-[9px] w-[7px] rounded-[2px] bg-[rgb(var(--state))] shadow-[0_0_8px_rgb(var(--state))] transition-colors duration-500" />
+      </div>
+      <span className="absolute bottom-[9px] h-[2px] w-[8px] rounded-full bg-[rgb(var(--state))] opacity-80" />
+    </div>
+  );
+}
+
+function SysRow({ label, value, tone }: { label: string; value: string; tone: "ok" | "warn" | "fail" | "idle" }) {
+  const dot = {
+    ok: "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]",
+    warn: "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]",
+    fail: "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]",
+    idle: "bg-zinc-500",
+  }[tone];
+  return (
+    <div className="flex items-center justify-between font-mono text-[10.5px] uppercase tracking-[0.14em]">
+      <span className="text-zinc-600">{label}</span>
+      <span className="flex items-center gap-2 text-zinc-300">
+        <span className={clsx("size-1.5 rounded-full", dot)} />
+        {value}
+      </span>
+    </div>
+  );
+}
+
 function Shell() {
   const route = useHashRoute();
   const { state } = useDevice();
   const { data: status, reload } = useLoad(api.status, [], 5000);
   const page = PAGES.find((p) => p.id === route) ?? PAGES[0];
+  const quota = status?.pool_fraction;
 
   return (
-    <div className="flex h-full">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-white/6 bg-black/20 px-3 py-5">
-        <a href="#/live" className="mb-7 flex items-center gap-3 px-2">
-          <div className="grid size-10 place-items-center rounded-2xl bg-gradient-to-br from-cyan-400 to-violet-500 text-lg font-black text-zinc-950 shadow-lg shadow-cyan-500/20">
-            ◕‿◕
-          </div>
+    <div data-state={state} className="relative flex h-full">
+      <div className="backdrop" />
+      <aside className="relative z-10 flex w-[232px] shrink-0 flex-col border-r border-white/[0.05] bg-black/30 px-3 py-5 backdrop-blur-xl">
+        <a href="#/live" className="mb-8 flex items-center gap-3 px-2">
+          <LogoMark />
           <div>
-            <div className="text-[17px] font-bold tracking-tight text-white">{status?.assistant.name ?? "AIVA"}</div>
-            <div className="text-[11px] text-zinc-500">voice desk buddy · v{status?.version ?? "…"}</div>
+            <div className="text-[16px] font-semibold tracking-[-0.01em] text-white">{status?.assistant.name ?? "AIVA"}</div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-600">desk companion · v{status?.version ?? "…"}</div>
           </div>
         </a>
-        <nav className="flex flex-col gap-1">
-          {PAGES.map((p) => (
-            <a
-              key={p.id}
-              href={`#/${p.id}`}
-              className={clsx(
-                "flex items-center gap-3 rounded-xl px-3 py-2 text-[13.5px] transition",
-                p.id === page.id ? "bg-white/8 text-white" : "text-zinc-400 hover:bg-white/4 hover:text-zinc-200",
-              )}
-            >
-              <p.icon className="size-4" />
-              {p.label}
-            </a>
-          ))}
+        <div className="label mb-2 px-3">Control</div>
+        <nav className="flex flex-col gap-0.5">
+          {PAGES.map((p) => {
+            const active = p.id === page.id;
+            return (
+              <a
+                key={p.id}
+                href={`#/${p.id}`}
+                className={clsx(
+                  "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] transition",
+                  active ? "bg-white/[0.06] text-white" : "text-zinc-500 hover:bg-white/[0.03] hover:text-zinc-200",
+                )}
+              >
+                {active && (
+                  <span className="absolute left-0 top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-full bg-[rgb(var(--state))] shadow-[0_0_10px_rgb(var(--state))]" />
+                )}
+                <p.icon className={clsx("size-[15px]", active ? "text-[rgb(var(--state))]" : "")} />
+                {p.label}
+              </a>
+            );
+          })}
         </nav>
-        <div className="mt-auto space-y-2 rounded-2xl border border-white/6 bg-white/[0.02] p-3 text-[12px] text-zinc-400">
-          <div className="flex items-center justify-between">
-            <span>Device</span>
-            <span className="flex items-center gap-1.5">
-              <StatusDot status={state === "offline" ? "fail" : state === "connecting" ? "warn" : "ok"} /> {state}
-            </span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span>AI brain</span>
-            <span className="flex items-center gap-1.5">
-              <StatusDot status={status?.llm_ready ? "ok" : "fail"} /> {status?.llm_ready ? "ready" : "no key"}
-            </span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span>Free quota</span>
-            <span>{status?.pool_fraction == null ? "—" : `${Math.round(status.pool_fraction * 100)}% left`}</span>
-          </div>
+        <div className="mt-auto space-y-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+          <div className="label mb-1">System</div>
+          <SysRow label="Device" value={state} tone={state === "offline" ? "fail" : state === "connecting" ? "warn" : "ok"} />
+          <SysRow label="Brain" value={status?.llm_ready ? "ready" : "no key"} tone={status?.llm_ready ? "ok" : "fail"} />
+          <SysRow
+            label="Quota"
+            value={quota == null ? "—" : `${Math.round(quota * 100)}%`}
+            tone={quota == null ? "idle" : quota > 0.25 ? "ok" : quota > 0.1 ? "warn" : "fail"}
+          />
         </div>
       </aside>
-      <main className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[1400px] px-8 py-7">{page.render(status, reload)}</div>
+      <main className="relative z-10 min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-[1440px] px-8 py-7">{page.render(status, reload)}</div>
       </main>
     </div>
   );

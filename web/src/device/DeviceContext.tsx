@@ -2,7 +2,7 @@
  * App-wide singletons: the virtual device connection and the face engine, so the
  * conversation keeps running while you browse the dashboard pages.
  */
-import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, type MutableRefObject, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { FaceEngine, type FaceMode } from "../face/engine";
 import type { Animation } from "../face/presets";
 import { type Caption, DeviceClient, type DeviceState } from "./DeviceClient";
@@ -12,7 +12,8 @@ interface DeviceCtx {
   engine: FaceEngine;
   state: DeviceState;
   captions: Caption[];
-  micLevel: number;
+  /** live mic peak 0..1 — a ref (updated ~50×/s) so it never re-renders React */
+  micLevelRef: MutableRefObject<number>;
   clearCaptions: () => void;
 }
 
@@ -32,7 +33,7 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
   const engine = useMemo(() => new FaceEngine(), []);
   const [state, setState] = useState<DeviceState>("offline");
   const [captions, setCaptions] = useState<Caption[]>([]);
-  const [micLevel, setMicLevel] = useState(0);
+  const micLevelRef = useRef(0);
 
   useEffect(() => {
     const offs = [
@@ -47,7 +48,9 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
       client.on("emotion", (e) => engine.setEmotion(e)),
       client.on("animation", (name) => engine.play(name as Animation)),
       client.on("userTalking", (t) => engine.setUserTalking(t)),
-      client.on("micLevel", (p) => setMicLevel((prev) => prev * 0.6 + p * 0.4)),
+      client.on("micLevel", (p) => {
+        micLevelRef.current = micLevelRef.current * 0.6 + p * 0.4;
+      }),
       client.on("caption", (c) =>
         setCaptions((prev) => {
           const i = prev.findIndex((x) => x.id === c.id);
@@ -75,8 +78,8 @@ export function DeviceProvider({ children }: { children: ReactNode }) {
   }, [client, engine]);
 
   const value = useMemo(
-    () => ({ client, engine, state, captions, micLevel, clearCaptions: () => setCaptions([]) }),
-    [client, engine, state, captions, micLevel],
+    () => ({ client, engine, state, captions, micLevelRef, clearCaptions: () => setCaptions([]) }),
+    [client, engine, state, captions],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

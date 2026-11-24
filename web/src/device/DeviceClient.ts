@@ -14,7 +14,9 @@ export interface Caption {
   id: number;
   role: "user" | "assistant" | "tool" | "notice";
   text: string;
-  ok?: boolean;
+  ts: number;
+  /** tool captions: running → done / failed */
+  status?: "running" | "done" | "failed";
   level?: string;
 }
 
@@ -39,6 +41,7 @@ export class DeviceClient {
   private reconnectTimer = 0;
   private closedByUser = false;
   private assistantCaption: Caption | null = null;
+  private toolCaptions = new Map<string, Caption>();
   state: DeviceState = "offline";
   handsFree = false;
   muted = false;
@@ -149,7 +152,7 @@ export class DeviceClient {
   async sendText(text: string): Promise<void> {
     await this.player.resume();
     this.player.flush();
-    this.pushCaption({ id: ++captionId, role: "user", text });
+    this.pushCaption({ id: ++captionId, role: "user", text, ts: Date.now() });
     this.send({ type: "chat", text });
   }
 
@@ -176,7 +179,7 @@ export class DeviceClient {
         if (this.handsFree) this.send({ type: "listen", state: "start", mode: "auto" });
         break;
       case "stt":
-        this.pushCaption({ id: ++captionId, role: "user", text: msg.text });
+        this.pushCaption({ id: ++captionId, role: "user", text: msg.text, ts: Date.now() });
         break;
       case "llm":
         if (msg.emotion) this.emit("emotion", msg.emotion);
@@ -187,7 +190,7 @@ export class DeviceClient {
           this.setState("speaking");
         } else if (msg.state === "sentence_start" && msg.text) {
           if (!this.assistantCaption) {
-            this.assistantCaption = { id: ++captionId, role: "assistant", text: msg.text };
+            this.assistantCaption = { id: ++captionId, role: "assistant", text: msg.text, ts: Date.now() };
           } else {
             this.assistantCaption = { ...this.assistantCaption, text: `${this.assistantCaption.text} ${msg.text}` };
           }
@@ -217,10 +220,20 @@ export class DeviceClient {
         this.emit("userTalking", !!msg.speaking);
         break;
       case "tool":
-        if (msg.status === "start") this.pushCaption({ id: ++captionId, role: "tool", text: msg.name });
+        if (msg.status === "start") {
+          const caption: Caption = { id: ++captionId, role: "tool", text: msg.name, ts: Date.now(), status: "running" };
+          this.toolCaptions.set(msg.name, caption);
+          this.pushCaption(caption);
+        } else {
+          const caption = this.toolCaptions.get(msg.name);
+          if (caption) {
+            this.toolCaptions.delete(msg.name);
+            this.pushCaption({ ...caption, status: msg.ok === false ? "failed" : "done" });
+          }
+        }
         break;
       case "notice":
-        this.pushCaption({ id: ++captionId, role: "notice", text: msg.text, level: msg.level });
+        this.pushCaption({ id: ++captionId, role: "notice", text: msg.text, level: msg.level, ts: Date.now() });
         break;
       case "face":
         if (msg.animation) this.emit("animation", msg.animation);

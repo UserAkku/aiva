@@ -54,7 +54,10 @@ def create_app(services: Services | None = None) -> FastAPI:
             candidate = (dist / path).resolve()
             if path and candidate.is_file() and candidate.is_relative_to(dist.resolve()):
                 return FileResponse(candidate)
-            return FileResponse(dist / "index.html")  # client-side routing
+            # index.html must never be cached, or a rebuilt UI keeps loading old asset hashes
+            return FileResponse(
+                dist / "index.html", headers={"Cache-Control": "no-cache"}
+            )  # client-side routing
     else:
 
         @app.get("/", include_in_schema=False)
