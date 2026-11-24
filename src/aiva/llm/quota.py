@@ -346,8 +346,14 @@ class QuotaGuard:
         if now < state.cooldown_until:
             return False, f"cooling down {state.cooldown_until - now:.0f}s ({state.cooldown_reason})"
         for metric, need in (("rpm", 1), ("rpd", 1), ("tpm", est_tokens), ("tpd", est_tokens)):
-            remaining, _ = state.remaining(metric, now)
-            if remaining is not None and remaining < need:
+            remaining, limit = state.remaining(metric, now)
+            if remaining is None:
+                continue
+            if metric in ("tpm", "tpd") and limit:
+                # token estimates are rough (and cached tokens are free on Groq): never rule a model
+                # out just because a request looks bigger than its whole bucket — let the API decide
+                need = min(need, int(limit * 0.6))
+            if remaining < need:
                 return False, f"{metric} exhausted ({remaining} left, need ~{need})"
         return True, "ok"
 

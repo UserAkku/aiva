@@ -103,7 +103,7 @@ def test_header_parsing_groq_style(quota: QuotaGuard) -> None:
             "x-ratelimit-limit-requests": "1000",
             "x-ratelimit-remaining-requests": "40",
             "x-ratelimit-limit-tokens": "8000",
-            "x-ratelimit-remaining-tokens": "7000",
+            "x-ratelimit-remaining-tokens": "3000",
             "x-ratelimit-reset-requests": "2h1m3.5s",
             "x-ratelimit-reset-tokens": "7.66s",
         },
@@ -171,3 +171,11 @@ def test_mistral_zero_limit_is_explained(quota: QuotaGuard) -> None:
     )
     ok, reason = quota.fits("ms", 10)
     assert not ok and "free plan" in reason
+
+
+def test_big_request_is_not_ruled_out_by_its_estimate(quota: QuotaGuard) -> None:
+    quota.register(DeploymentConfig(id="g", provider="groq", model="m", limits=Limits(tpm=8000)), True)
+    quota.on_headers("g", 200, {"x-ratelimit-limit-tokens": "8000", "x-ratelimit-remaining-tokens": "8000"})
+    assert quota.fits("g", 9543)[0]  # estimate > whole bucket: still try (real usage may be smaller)
+    quota.on_headers("g", 200, {"x-ratelimit-limit-tokens": "8000", "x-ratelimit-remaining-tokens": "1500"})
+    assert not quota.fits("g", 9543)[0]  # bucket nearly empty: skip
