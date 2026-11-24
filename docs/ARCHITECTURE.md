@@ -9,10 +9,10 @@ the brain.
 
 | Layer | Package | Responsibility | Built on |
 |---|---|---|---|
-| Body | `web/src/device`, `web/src/face` | Mic capture, playback, OLED face | Web Audio, AudioWorklet, esp32-eyes port |
+| Body | `web/src/device`, `web/src/face` | Mic capture, playback, OLED face | Web Audio, AudioWorklet, pycozmo procedural-face port |
 | Gateway | `aiva.devices.gateway` | xiaozhi WebSocket handshake, OTA endpoint, auth | FastAPI |
 | Voice session | `aiva.devices.session`, `.speaker` | Turn-taking state machine, barge-in, ordered paced speech | Silero VAD |
-| Speech | `aiva.voice` | STT with fallback, streaming TTS with fallback | Groq Whisper, Mistral Voxtral, edge-tts, macOS `say` |
+| Speech | `aiva.voice` | STT with fallback, emotion-aware streaming TTS with fallback | Groq Whisper, Mistral Voxtral, Sarvam Bulbul, edge-tts, macOS `say` |
 | Brain | `aiva.brain` | Agent loop, persona, memory, skill routing, confirmation gate | pydantic-ai |
 | LLM | `aiva.llm` | Free-tier catalog, quota guard, quota-aware router | pydantic-ai `SelectModel` + `ModelFallback` |
 | Skills | `aiva.tools`, `aiva.connectors` | 49 tools, Gmail, MCP servers | ddgs, trafilatura, PyMuPDF, Open-Meteo, MCP |
@@ -115,7 +115,7 @@ cancellation (the browser) get barge-in through a stricter second VAD while AIVA
 | LLM slow to start | `first_event_timeout` (6 s) → fallback |
 | Every LLM down | AIVA says so in a sentence (never silent) |
 | Groq STT down | Mistral Voxtral (Hindi supported) |
-| Edge TTS down | macOS `say` (Lekha / Tara voices); circuit breaker for 60 s |
+| Sarvam / Edge TTS down | next engine in the chain (Sarvam → Edge → macOS `say`); per-engine circuit breaker for 60 s |
 | Whisper hallucination on noise | Segment filtering by no-speech probability + junk-phrase filter |
 | Device disconnects | Turn cancelled, history keeps an "(interrupted)" note; browser auto-reconnects |
 | Edge TTS partially spoken then fails | Stops cleanly (no repeated audio) |

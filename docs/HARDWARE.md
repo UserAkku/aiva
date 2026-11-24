@@ -65,9 +65,9 @@ floating pin is 9 dB) and keep the firmware volume ≤ 60%.
 
 xiaozhi's OLED UI shows an emoji glyph per emotion. To show AIVA's eyes and mouth instead:
 
-* Port `web/src/face/engine.ts` + `framebuffer.ts` to C++ (they're dependency-free on
-  purpose), or use the original **esp32-eyes** library for the eyes and add the mouth
-  routines — the presets are identical to the simulator's.
+* Port `web/src/face/procedural.ts`, `engine.ts` and `framebuffer.ts` to C++ (they're
+  dependency-free on purpose; the eyes are pycozmo's procedural face, which was designed for
+  Cozmo's identical 128×64 OLED).
 * Hook it into the firmware's `OledDisplay::SetEmotion()` and drive the mouth from the
   speaker level, running at ~20 fps on the S3's second core.
 * The server already sends everything the face needs (`llm` emotion per sentence, `tts`

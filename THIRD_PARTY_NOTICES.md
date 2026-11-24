@@ -6,7 +6,8 @@ AIVA is assembled from open-source projects. Thank you to all of them.
 
 | Project | Licence | Used for |
 |---|---|---|
-| [playfultechnology/esp32-eyes](https://github.com/playfultechnology/esp32-eyes) (© 2023 Alastair Aitchison / Playful Technology, © 2020 Luis Llamas) | AGPL-3.0 | Eye presets and eye-drawing algorithm, ported to TypeScript in `web/src/face/` |
+| [zayfod/pycozmo](https://github.com/zayfod/pycozmo) — `ProceduralFace` | MIT | Cozmo-style procedural eyes (43 parameters, eyelids), ported to TypeScript in `web/src/face/procedural.ts` |
+| "Expressive Eyes" by Catherine Chambers (via pycozmo) | MIT (as distributed in pycozmo) | The 25 eye expressions AIVA's 21 emotions are built on |
 | [snakers4/silero-vad](https://github.com/snakers4/silero-vad) | MIT | `src/aiva/assets/silero_vad.onnx` voice-activity model |
 | [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) | MIT | WebSocket protocol, emotion vocabulary and board pin map (firmware for phase 2) |
 
@@ -30,6 +31,7 @@ AIVA is assembled from open-source projects. Thank you to all of them.
 ## Services (free tiers, your own keys)
 
 Groq, Mistral AI, Google Gemini, Cerebras, OpenRouter (LLMs); Groq Whisper and Mistral
-Voxtral (speech-to-text); Microsoft Edge read-aloud voices via edge-tts (text-to-speech);
+Voxtral (speech-to-text); Sarvam AI Bulbul and Microsoft Edge read-aloud voices via edge-tts
+(text-to-speech);
 Open-Meteo (weather), Frankfurter/ECB (exchange rates), Wikipedia, DuckDuckGo.
 Use them within their terms of service.

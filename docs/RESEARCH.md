@@ -46,6 +46,35 @@ persona tells the model to write Hindi words in Devanagari and English words in 
 ("आज का weather बहुत अच्छा है"). Whisper gets a Devanagari+English style prompt so its
 transcripts follow the same convention.
 
+### 2b. Making the voice sound human (Nov 2026)
+
+| Option | What it is | Verdict |
+|---|---|---|
+| **Sarvam Bulbul v4 Flash** | Indian TTS API, 200+ personas incl. `*_enhi_companion` (Hinglish code-mixed, companion style); `pace`/`pitch`/`loudness`/`temperature` controls; raw-PCM HTTP streaming. Free credits on sign-up, then ≈₹30/10K chars. | **Primary voice** when `SARVAM_API_KEY` is set; emotion → delivery mapping in `voice/tts.py` |
+| Microsoft Edge neural (edge-tts) | Free, no key; Hindi Swara / Indian-English Neerja; rate/pitch/volume adjustable | **Free fallback**, now with per-emotion prosody |
+| Indus Pocket TTS (Indus-Labs) | 110M-param Hindi/Hinglish model distilled from Kyutai Pocket TTS; ~50 ms first audio on one CPU thread; UTMOS 4.2; CC-BY-4.0; one voice, no emotion tags | Promising **offline** engine — installed for evaluation but running its downloaded code needs the user's OK |
+| ElevenLabs v3 / Flash | Most expressive (audio tags like [laughs]); Hindi supported | Free tier only ~10 min/month — optional upgrade |
+| Svara-TTS / Orpheus / Indic Parler | Open models with emotion tags | 3B-class — too heavy for real-time on an 8 GB Mac |
+
+Beyond the engine, the persona now writes like a person speaks (interjections such as
+"अरे वाह!", "हम्म…", natural pauses, "हाहा"), which matters as much as the voice itself.
+
+Sources: [Sarvam TTS docs](https://docs.sarvam.ai/api/api-guides-tutorials/text-to-speech/overview) ·
+[Bulbul models & voices](https://docs.sarvam.ai/api/api-guides-tutorials/models/bulbul) ·
+[Sarvam pricing](https://sarvam.ai/api-pricing) ·
+[Indus Pocket TTS](https://huggingface.co/Indus-Labs/indus-pocket-tts) ·
+[Svara-TTS](https://huggingface.co/kenpath/svara-tts-v1)
+
+### 2c. Making the face expressive
+
+The first face (esp32-eyes presets) read as generic: the shapes switched but nothing moved.
+Anki Cozmo — whose screen was also a 128×64 OLED — gets its life from *procedural eyes with
+eyelids*: 19 parameters per eye (corner radii, tilt, scale, upper/lower lid height, angle and
+bend). AIVA now uses a TypeScript port of pycozmo's `ProceduralFace` and the 25 "Expressive
+Eyes" expressions, animates every parameter with springs (overshoot = weight), and adds
+per-emotion behaviours, saccades with perspective, double blinks and a morphing mouth.
+`web/scripts/face-sheet.ts` renders all 21 emotions to a contact sheet for review.
+
 ## 3. Open-source building blocks evaluated
 
 | Project | Stars / licence | Verdict |
@@ -55,8 +84,9 @@ transcripts follow the same convention.
 | [pipecat-ai/pipecat](https://github.com/pipecat-ai/pipecat) | ~17k, BSD-2 | Considered for the voice loop. Rejected: our needs are narrow (one protocol, one STT, one TTS) and quota-aware routing + xiaozhi framing are custom anyway; a lean session (~400 lines) is easier to reason about and to present. |
 | [livekit/agents](https://github.com/livekit/agents) | ~15k, Apache-2.0 | Needs a LiveKit server; overkill here. |
 | [pydantic/pydantic-ai](https://github.com/pydantic/pydantic-ai) | ~21k, MIT | **Use (brain)**. v2 brings `SelectModel`, `ModelFallback`, `PrepareTools`, `ProcessHistory`, MCP toolsets and streaming events — exactly the primitives needed. |
-| [playfultechnology/esp32-eyes](https://github.com/playfultechnology/esp32-eyes) | AGPL-3.0 | **Use (face)**: eye presets + drawing algorithm ported to TypeScript; the same C++ library can draw them on the OLED. |
-| [FluxGarage/RoboEyes](https://github.com/FluxGarage/RoboEyes) | ~1k, GPL-3.0 | Nice eyes, fewer moods, no mouth; esp32-eyes preferred. |
+| [zayfod/pycozmo](https://github.com/zayfod/pycozmo) | ~250★, MIT | **Use (face)**: Cozmo's procedural eyes + Expressive Eyes set, ported to TypeScript (and portable to C++). |
+| [playfultechnology/esp32-eyes](https://github.com/playfultechnology/esp32-eyes) | AGPL-3.0 | Used for v1 of the face; replaced — static presets felt generic. |
+| [FluxGarage/RoboEyes](https://github.com/FluxGarage/RoboEyes) | ~1k, GPL-3.0 | Nice eyes but only four moods and no eyelid model; pycozmo's procedural face is richer. |
 | [snakers4/silero-vad](https://github.com/snakers4/silero-vad) | ~11k, MIT | **Use**. |
 | [rany2/edge-tts](https://github.com/rany2/edge-tts) | ~13k, LGPL/GPL | **Use**. |
 | [deedy5/ddgs](https://github.com/deedy5/ddgs) | MIT | **Use** for search/news/videos (no key). |

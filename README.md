@@ -16,11 +16,14 @@ count to 100, crack Hinglish jokes, and plug into any MCP tool server.
 
 ## Highlights
 
-- **Talks Hinglish naturally** — Groq Whisper STT, free Microsoft Edge neural voices
-  (Hindi + Indian English), streaming so the first word plays in ~1 s.
+- **Talks Hinglish like a person** — Groq Whisper STT; voices from **Sarvam Bulbul**
+  (Indian "companion" personas made for code-mixed Hinglish) with free Edge voices as
+  fallback. Every sentence is spoken in its emotion: happy is brighter and quicker, sad
+  slower and softer, angry louder.
 - **21 emotions on an OLED face** — the LLM tags its own mood (`<happy>`, `<sad>`…);
-  eyes are a port of [esp32-eyes](https://github.com/playfultechnology/esp32-eyes), plus mouths,
-  lip-sync, hearts, tears, sunglasses, Zzz and 11 animations (dance, nod, dizzy…).
+  Cozmo-style procedural eyes (ported from [pycozmo](https://github.com/zayfod/pycozmo)) with
+  real eyelids, spring physics, per-emotion behaviours (laughter bounces, anger trembles,
+  confusion tilts), a morphing lip-synced mouth and 11 animations (dance, nod, dizzy…).
 - **Never runs out mid-demo** — a quota-aware router spreads requests across several
   free LLM tiers (Groq, Mistral, Gemini, Cerebras, OpenRouter), reads their
   rate-limit headers, skips exhausted models instantly, and **AIVA says out loud**
@@ -123,7 +126,7 @@ src/aiva/
   devices/      xiaozhi-compatible gateway, voice session state machine, speaker
   api/          dashboard REST + live events
 web/src/
-  face/         OLED face engine (framebuffer, esp32-eyes port, expressions)
+  face/         OLED face engine (framebuffer, Cozmo-style procedural eyes, springs, mouth)
   device/       virtual ESP32: protocol client, mic worklet, audio player
   pages/        Live, Connectors, Skills, Usage, Memory, Settings, Activity, Hardware
 config/aiva.yaml   defaults (providers, models, voices, VAD) — dashboard edits go to data/
@@ -134,7 +137,7 @@ tests/             router/quota + end-to-end device tests (incl. real speech thr
 ## Credits
 
 Built by standing on open-source shoulders — pydantic-ai, FastAPI, Silero VAD,
-edge-tts, PyMuPDF, ddgs, trafilatura, xiaozhi-esp32, esp32-eyes and more. See
+edge-tts, PyMuPDF, ddgs, trafilatura, xiaozhi-esp32, pycozmo and more. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Licensed under **AGPL-3.0-or-later** (compatible with PyMuPDF and the esp32-eyes port).
+Licensed under **AGPL-3.0-or-later** (compatible with PyMuPDF and every component used).
