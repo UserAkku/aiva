@@ -14,6 +14,10 @@ count to 100, crack Hinglish jokes, and plug into any MCP tool server.
 |---|---|
 | ![Live page](docs/images/live.jpg) | ![Connectors page](docs/images/connectors.jpg) |
 
+All 21 emotions (rendered by `web/scripts/face-sheet.ts`, pixel-exact for the 128×64 OLED):
+
+![AIVA's faces](docs/images/faces.png)
+
 ## Highlights
 
 - **Talks Hinglish like a person** — Groq Whisper STT; voices from **Sarvam Bulbul**
