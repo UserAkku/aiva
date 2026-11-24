@@ -40,8 +40,8 @@ PROVIDERS: dict[str, ProviderInfo] = {
         key_env="MISTRAL_API_KEY",
         signup_url="https://console.mistral.ai/api-keys",
         models_url="https://api.mistral.ai/v1/models",
-        free_tier="Experiment plan: 1 req/s, 500K tokens/min, very large monthly budget. "
-        "Phone verification; data may be used for training.",
+        free_tier="Free mode: small models only (ministral-14b/8b, nemo) at 2 req/min each, 40K tok/min; "
+        "Voxtral speech-to-text 60 req/min. Larger models need pay-as-you-go.",
         header_request_window="minute",
     ),
     "google": ProviderInfo(

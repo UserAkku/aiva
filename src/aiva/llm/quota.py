@@ -101,7 +101,7 @@ def parse_rate_limit_headers(
             attr = "limit"
         else:
             continue
-        if "request" in name:
+        if "request" in name or "-req-" in name or name.endswith("-req"):
             kind = "requests"
         elif "token" in name or "size" in name:
             kind = "tokens"
@@ -141,6 +141,7 @@ class DeploymentState:
     total_errors: int = 0
     last_error: str | None = None
     last_ok_at: float | None = None
+    last_request_at: float = 0.0
     last_latency_ms: float | None = None
 
     # ── sliding windows ──────────────────────────────────────────────────────
@@ -216,6 +217,7 @@ class QuotaGuard:
         self._fired: set[str] = set()
         self._fired_day = self._today()
         self._pending: list[Warning_] = []
+        self._provider_last_request: dict[str, float] = {}
 
     @staticmethod
     def _today() -> str:
@@ -255,6 +257,12 @@ class QuotaGuard:
         now = time.time()
         buckets, retry_after = parse_rate_limit_headers(state.provider, headers, now)
         state.buckets.update(buckets)
+        if status_code == 429 and any(b.limit == 0 for b in buckets.values()):
+            self._cooldown(
+                state, 1800.0, "provider limit is 0 for this model — not included in your free plan"
+            )
+            state.last_error = "this model isn't available on your free plan (limit 0)"
+            return
         if status_code == 429:
             self._cooldown(
                 state, retry_after or self._exhausted_reset(state, now) or 20.0, "rate limited (429)"
@@ -312,6 +320,24 @@ class QuotaGuard:
         self.bus.publish("quota.cooldown", deployment=state.id, seconds=round(seconds, 1), reason=reason)
 
     # ── decisions ────────────────────────────────────────────────────────────
+    def pace_delay(self, dep_id: str) -> float:
+        """Seconds to wait before the next request so a requests-per-second limit is respected.
+
+        Per-second limits on free tiers are per account (Mistral: 1 req/s for the whole
+        workspace), so pacing is shared by every deployment of the same provider.
+        """
+        state = self.states.get(dep_id)
+        if state is None or not state.limits.rps:
+            return 0.0
+        last = self._provider_last_request.get(state.provider, 0.0)
+        return max(0.0, last + 1.0 / state.limits.rps - time.monotonic())
+
+    def mark_request(self, dep_id: str) -> None:
+        if state := self.states.get(dep_id):
+            now = time.monotonic()
+            state.last_request_at = now
+            self._provider_last_request[state.provider] = now
+
     def fits(self, dep_id: str, est_tokens: int) -> tuple[bool, str]:
         state = self.states.get(dep_id)
         if state is None or not state.has_key:

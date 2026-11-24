@@ -152,3 +152,22 @@ def test_all_auth_errors_detection() -> None:
     auth = [ModelHTTPError(401, "a"), ModelHTTPError(403, "b")]
     assert _all_auth_errors(ExceptionGroup("all failed", auth))
     assert not _all_auth_errors(ExceptionGroup("mixed", [*auth, ModelHTTPError(429, "c")]))
+
+
+def test_rps_pacing_is_shared_per_provider(quota: QuotaGuard) -> None:
+    for dep_id in ("m1", "m2"):
+        quota.register(
+            DeploymentConfig(id=dep_id, provider="mistral", model=dep_id, limits=Limits(rps=1)), True
+        )
+    assert quota.pace_delay("m1") == 0
+    quota.mark_request("m1")
+    assert 0.9 < quota.pace_delay("m2") <= 1.0  # same account → must wait ~1 s
+
+
+def test_mistral_zero_limit_is_explained(quota: QuotaGuard) -> None:
+    quota.register(DeploymentConfig(id="ms", provider="mistral", model="mistral-small-latest"), True)
+    quota.on_headers(
+        "ms", 429, {"x-ratelimit-limit-req-minute": "0", "x-ratelimit-remaining-req-minute": "0"}
+    )
+    ok, reason = quota.fits("ms", 10)
+    assert not ok and "free plan" in reason

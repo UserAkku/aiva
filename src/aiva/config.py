@@ -39,6 +39,7 @@ def project_root() -> Path:
 class Limits(BaseModel):
     """Free-tier limits of one deployment. ``None`` = unknown / not enforced."""
 
+    rps: float | None = None  # requests per second (Mistral free tier: 1)
     rpm: int | None = None
     rpd: int | None = None
     tpm: int | None = None

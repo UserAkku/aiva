@@ -65,7 +65,8 @@ class LLMRouter:
 
     def select(self, ctx: Any) -> Model:
         """``SelectModel`` hook: best-scoring deployment for this request step."""
-        estimate = estimate_request_tokens(list(ctx.messages)) + 1500  # + instructions & tool schemas
+        # + instructions & the routed tool schemas (~700 tokens measured) + a typical spoken reply
+        estimate = estimate_request_tokens(list(ctx.messages)) + 900
         ranked = self.ranked(estimate)
         choice = ranked[0] if ranked else self.chain()[0]
         logger.debug("router → {} (est. {} tokens)", choice.deployment_id, estimate)

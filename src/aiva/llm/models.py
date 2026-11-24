@@ -11,6 +11,7 @@ headers to the quota guard, and is wrapped in :class:`GuardedModel`, which
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -100,10 +101,21 @@ class GuardedModel(WrapperModel):
 
     def _precheck(self, messages: list[ModelMessage], params: ModelRequestParameters) -> None:
         settings = getattr(self.wrapped, "settings", None) or {}
-        estimate = estimate_request_tokens(messages, params) + int(settings.get("max_tokens") or 400)
+        # spoken replies are short: budget ~200 output tokens rather than the full max_tokens cap
+        estimate = estimate_request_tokens(messages, params) + min(
+            int(settings.get("max_tokens") or 400), 200
+        )
         ok, reason = self.quota.fits(self.deployment_id, estimate)
         if not ok:
             raise QuotaSkip(model_name=self.model_name, message=f"{self.deployment_id} skipped: {reason}")
+
+    async def _pace(self) -> None:
+        delay = self.quota.pace_delay(self.deployment_id)
+        if delay > 1.5:  # would stall the conversation: let the fallback chain move on
+            raise QuotaSkip(model_name=self.model_name, message=f"{self.deployment_id} busy for {delay:.1f}s")
+        if delay > 0:
+            await asyncio.sleep(delay)
+        self.quota.mark_request(self.deployment_id)
 
     def _record_failure(self, exc: BaseException) -> None:
         if isinstance(exc, QuotaSkip):
@@ -126,6 +138,7 @@ class GuardedModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         self._precheck(messages, model_request_parameters)
+        await self._pace()
         started = time.monotonic()
         try:
             response = await super().request(messages, model_settings, model_request_parameters)
@@ -144,6 +157,7 @@ class GuardedModel(WrapperModel):
         run_context: Any | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         self._precheck(messages, model_request_parameters)
+        await self._pace()
         started = time.monotonic()
         try:
             async with super().request_stream(

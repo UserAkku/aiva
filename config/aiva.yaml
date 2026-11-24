@@ -47,11 +47,13 @@ llm:
       limits: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 }
       settings: { groq_reasoning_effort: none, groq_reasoning_format: hidden }
 
-    - id: mistral-medium
+    # Mistral free mode (measured Nov 2026): small models only, 2 requests/min EACH
+    # (limits are per model), 40K tokens/min. mistral-small/medium/large need pay-as-you-go.
+    - id: mistral-ministral-14b
       provider: mistral
-      model: mistral-medium-latest
+      model: ministral-14b-latest
       priority: 30
-      limits: { rpm: 60, tpm: 500000 }
+      limits: { rpm: 2, tpm: 40000 }
 
     - id: groq-gpt-oss-20b
       provider: groq
@@ -60,11 +62,17 @@ llm:
       limits: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 }
       settings: { groq_reasoning_effort: low, groq_reasoning_format: hidden }
 
-    - id: mistral-small
+    - id: mistral-nemo
       provider: mistral
-      model: mistral-small-latest
+      model: open-mistral-nemo
       priority: 50
-      limits: { rpm: 60, tpm: 500000 }
+      limits: { rpm: 2, tpm: 40000 }
+
+    - id: mistral-ministral-8b
+      provider: mistral
+      model: ministral-8b-latest
+      priority: 55
+      limits: { rpm: 2, tpm: 40000 }
 
     - id: gemini-flash-lite
       provider: google

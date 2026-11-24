@@ -11,6 +11,7 @@ import asyncio
 import shutil
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
@@ -56,16 +57,38 @@ async def _ping_deployment(services: Services, dep_id: str) -> Check:
     started = time.monotonic()
     try:
         agent = Agent(model, instructions="Reply with exactly: OK")
-        result = await asyncio.wait_for(agent.run("ping", model_settings={"max_tokens": 16}), timeout=25)
+        result = await asyncio.wait_for(agent.run("ping", model_settings={"max_tokens": 300}), timeout=25)
         ms = (time.monotonic() - started) * 1000
         return Check(f"LLM {dep_id}", "ok", f"answered '{result.output.strip()[:20]}' in {ms:.0f} ms", "llm")
     except Exception as exc:
         return Check(f"LLM {dep_id}", "fail", f"{type(exc).__name__}: {str(exc)[:160]}", "llm")
 
 
+def leaked_template_keys(root: Path) -> list[str]:
+    """Names of variables that have real values in the git-tracked .env.example."""
+    path = root / ".env.example"
+    if not path.exists():
+        return []
+    names = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        name, sep, value = line.partition("=")
+        if sep and not name.startswith("#") and name.strip().endswith("_KEY") and value.strip():
+            names.append(name.strip())
+    return names
+
+
 async def run_checks(services: Services, *, deep: bool = False) -> list[Check]:
     checks: list[Check] = []
     config, secrets = services.config, services.secrets
+    if leaked := leaked_template_keys(services.store.root):
+        checks.append(
+            Check(
+                ".env.example",
+                "fail",
+                f"real keys in a file that is committed to GitHub: {', '.join(leaked)} — move them to .env",
+                "security",
+            )
+        )
 
     # ── LLM providers ────────────────────────────────────────────────────────
     used = {d.provider for d in config.llm.deployments if d.enabled}
@@ -98,7 +121,9 @@ async def run_checks(services: Services, *, deep: bool = False) -> list[Check]:
             )
         )
     if deep and services.router.models:
-        checks.extend(await asyncio.gather(*(_ping_deployment(services, d) for d in services.router.models)))
+        # one request at a time: several free tiers (Mistral: 1 req/s) reject parallel bursts
+        for dep_id in services.router.models:
+            checks.append(await _ping_deployment(services, dep_id))
 
     # ── voice ────────────────────────────────────────────────────────────────
     checks.append(
