@@ -1,12 +1,17 @@
-"""Gmail over IMAP (read/search) and SMTP (send) using a Google App Password.
+"""Gmail for AIVA, two ways:
 
-Setup (2 minutes): Google Account → Security → 2-Step Verification ON → App
-passwords → create one named "AIVA" → paste the 16 letters in the dashboard.
+* **Continue with Google** (recommended): OAuth sign-in (see ``google.py``) + the Gmail
+  REST API. One click once the app is registered.
+* **App Password** (fallback): IMAP (read/search) and SMTP (send) with a 16-letter
+  Google App Password.
+
+Whichever is connected is used; Google sign-in wins if both are.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import email
 import imaplib
 import re
@@ -19,6 +24,9 @@ from email.utils import parsedate_to_datetime
 from html import unescape
 from typing import Any
 
+import httpx
+
+from .google import GoogleAccount
 from .store import JsonStore
 
 IMAP_HOST, SMTP_HOST = "imap.gmail.com", "smtp.gmail.com"
@@ -64,19 +72,130 @@ def _plain_text(msg: email.message.Message) -> str:
     return re.sub(r"\s+", " ", unescape(text)).strip()
 
 
+GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+
+def _header(headers: list[dict[str, str]], name: str) -> str:
+    return next((h.get("value", "") for h in headers if h.get("name", "").lower() == name.lower()), "")
+
+
+def _decode_part(data: str) -> str:
+    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4)).decode("utf-8", errors="replace")
+
+
+def _api_body(payload: dict[str, Any]) -> str:
+    """Prefer text/plain anywhere in the MIME tree, else strip the first text/html."""
+    html_body = ""
+    stack = [payload]
+    while stack:
+        part = stack.pop(0)
+        mime = part.get("mimeType", "")
+        data = (part.get("body") or {}).get("data")
+        if data and mime == "text/plain":
+            return _decode_part(data).strip()
+        if data and mime == "text/html" and not html_body:
+            html_body = _decode_part(data)
+        stack.extend(part.get("parts") or [])
+    text = re.sub(r"(?is)<(script|style).*?</\1>", " ", html_body)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", unescape(text)).strip()
+
+
+class GmailAPI:
+    """Minimal Gmail REST client on top of the Google sign-in."""
+
+    def __init__(self, account: GoogleAccount) -> None:
+        self.account = account
+
+    async def _get(self, path: str, **params: Any) -> dict[str, Any]:
+        token = await self.account.access_token()
+        resp = await self.account.http.get(
+            f"{GMAIL_API}{path}", params=params, headers={"Authorization": f"Bearer {token}"}
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Gmail API {resp.status_code}: {resp.text[:200]}")
+        return resp.json()
+
+    async def profile(self) -> str:
+        data = await self._get("/profile")
+        return (
+            f"Connected with Google as {data.get('emailAddress')} — {data.get('messagesTotal', '?')} emails."
+        )
+
+    async def _summaries(self, query: str, limit: int) -> list[MailSummary]:
+        listing = await self._get("/messages", q=query, maxResults=limit)
+        out: list[MailSummary] = []
+        for item in listing.get("messages", [])[:limit]:
+            msg = await self._get(
+                f"/messages/{item['id']}", format="metadata", metadataHeaders=["From", "Subject", "Date"]
+            )
+            headers = (msg.get("payload") or {}).get("headers", [])
+            try:
+                date = parsedate_to_datetime(_header(headers, "Date")).strftime("%d %b %H:%M")
+            except Exception:
+                date = _header(headers, "Date")
+            out.append(
+                MailSummary(
+                    uid=item["id"],
+                    sender=_header(headers, "From"),
+                    subject=_header(headers, "Subject") or "(no subject)",
+                    date=date,
+                    unread="UNREAD" in msg.get("labelIds", []),
+                )
+            )
+        return out
+
+    async def inbox(self, unread_only: bool, limit: int) -> list[MailSummary]:
+        return await self._summaries("in:inbox is:unread" if unread_only else "in:inbox", limit)
+
+    async def search(self, query: str, limit: int) -> list[MailSummary]:
+        return await self._summaries(query, limit)
+
+    async def read(self, uid: str) -> dict[str, str]:
+        msg = await self._get(f"/messages/{uid}", format="full")
+        headers = (msg.get("payload") or {}).get("headers", [])
+        return {
+            "from": _header(headers, "From"),
+            "to": _header(headers, "To"),
+            "subject": _header(headers, "Subject"),
+            "date": _header(headers, "Date"),
+            "body": _api_body(msg.get("payload") or {}),
+        }
+
+    async def send(self, to: str, subject: str, body: str) -> None:
+        msg = EmailMessage()
+        msg["To"], msg["Subject"] = to, subject
+        if self.account.email:
+            msg["From"] = self.account.email
+        msg.set_content(body)
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        token = await self.account.access_token()
+        resp = await self.account.http.post(
+            f"{GMAIL_API}/messages/send", json={"raw": raw}, headers={"Authorization": f"Bearer {token}"}
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Gmail API {resp.status_code}: {resp.text[:200]}")
+
+
 class GmailConnector:
     name = "gmail"
 
-    def __init__(self, store: JsonStore) -> None:
+    def __init__(self, store: JsonStore, http: httpx.AsyncClient | None = None) -> None:
         self.store = store
         cfg = store.load("gmail", {}) or {}
         self.address: str = cfg.get("address", "")
         self._password: str = cfg.get("app_password", "")
         self.last_error: str | None = None
+        self.google = GoogleAccount(store, http)
+        self.api = GmailAPI(self.google)
+
+    @property
+    def via_google(self) -> bool:
+        return self.google.connected
 
     @property
     def configured(self) -> bool:
-        return bool(self.address and self._password)
+        return self.via_google or bool(self.address and self._password)
 
     def configure(self, address: str, app_password: str) -> None:
         self.address = address.strip()
@@ -132,15 +251,23 @@ class GmailConnector:
         return message
 
     def disconnect(self) -> None:
+        """Forget the App Password connection (Google sign-in is separate: see disconnect_google)."""
         self.address = self._password = ""
         self.store.delete("gmail")
+
+    async def disconnect_google(self) -> None:
+        await self.google.disconnect()
 
     def status(self) -> dict[str, Any]:
         return {
             "name": "gmail",
             "configured": self.configured,
-            "account": self.address,
+            "method": "google"
+            if self.via_google
+            else ("app_password" if self.address and self._password else None),
+            "account": self.google.email if self.via_google else self.address,
             "error": self.last_error,
+            "google": self.google.status(),
         }
 
     # ── IMAP helpers (blocking; call through asyncio.to_thread) ──────────────
@@ -249,19 +376,30 @@ class GmailConnector:
     # ── async facade ─────────────────────────────────────────────────────────
     async def test(self) -> str:
         try:
+            if self.via_google:
+                return await self.api.profile()
             return await asyncio.to_thread(self.test_sync)
         except Exception as exc:
             self.last_error = self.explain(exc)
             raise
 
     async def inbox(self, unread_only: bool = True, limit: int = 5) -> list[MailSummary]:
+        if self.via_google:
+            return await self.api.inbox(unread_only, limit)
         return await asyncio.to_thread(self.inbox_sync, unread_only, limit)
 
     async def search(self, query: str, limit: int = 5) -> list[MailSummary]:
+        if self.via_google:
+            return await self.api.search(query, limit)
         return await asyncio.to_thread(self.search_sync, query, limit)
 
     async def read(self, uid: str) -> dict[str, str]:
+        if self.via_google:
+            return await self.api.read(uid)
         return await asyncio.to_thread(self.read_sync, uid)
 
     async def send(self, to: str, subject: str, body: str) -> None:
+        if self.via_google:
+            await self.api.send(to, subject, body)
+            return
         await asyncio.to_thread(self.send_sync, to, subject, body)

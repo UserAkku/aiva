@@ -32,7 +32,7 @@ const PAGES: Page[] = [
 ];
 
 function useHashRoute(): string {
-  const read = () => location.hash.replace(/^#\/?/, "") || "live";
+  const read = () => location.hash.replace(/^#\/?/, "").split("?")[0] || "live";
   const [route, setRoute] = useState(read);
   useEffect(() => {
     const on = () => setRoute(read());

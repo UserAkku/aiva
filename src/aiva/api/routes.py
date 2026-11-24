@@ -7,13 +7,14 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..brain.events import FaceEvent, Notice, SpeakDirect, TextDelta, ToolFinished, ToolStarted, TurnFinished
 from ..config import PROVIDER_KEY_ENV
+from ..connectors.google import GoogleAuthError
 from ..devices.gateway import lan_ip
 from ..doctor import run_checks, summarize
 from ..emotions import EmotionTagParser
@@ -33,6 +34,10 @@ class KeyBody(BaseModel):
 class GmailBody(BaseModel):
     address: str
     app_password: str
+
+
+class GoogleClientBody(BaseModel):
+    config: str = Field(min_length=10, max_length=20000)
 
 
 class MCPBody(BaseModel):
@@ -234,6 +239,28 @@ def build_router(services: Services) -> APIRouter:
             raise HTTPException(400, gmail.explain(exc)) from exc
         services.bus.publish("connector.connected", name="gmail")
         return {"ok": True, "message": message}
+
+    @api.post("/connectors/google/client")
+    async def google_client(body: GoogleClientBody) -> dict[str, Any]:
+        try:
+            services.connectors.gmail.google.set_client(body.config)
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(400, f"That doesn't look like Google OAuth client details: {exc}") from exc
+        return services.connectors.gmail.google.status()
+
+    @api.post("/connectors/google/start")
+    async def google_start(request: Request) -> dict[str, Any]:
+        # Google redirects back to this app's root on the loopback address (Desktop-app clients allow it)
+        redirect_uri = f"{request.url.scheme}://{request.url.netloc}/"
+        try:
+            return {"url": services.connectors.gmail.google.start(redirect_uri)}
+        except GoogleAuthError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @api.delete("/connectors/google")
+    async def google_disconnect() -> dict[str, Any]:
+        await services.connectors.gmail.disconnect_google()
+        return {"ok": True}
 
     @api.delete("/connectors/gmail")
     async def disconnect_gmail() -> dict[str, Any]:

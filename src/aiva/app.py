@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -45,6 +46,31 @@ def create_app(services: Services | None = None) -> FastAPI:
     app.include_router(build_gateway(services))
     app.include_router(build_api(services))
 
+    @app.get("/", include_in_schema=False)
+    async def root(request: Request) -> Response:
+        """The app's home — and where Google redirects back after 'Continue with Google'."""
+        q = request.query_params
+        google = services.connectors.gmail.google
+        if "state" in q and ("code" in q or "error" in q):  # Google's OAuth redirect
+            if q.get("error"):
+                message = "Sign-in was cancelled." if q["error"] == "access_denied" else q["error"]
+                return RedirectResponse(
+                    f"/#/connectors?google=error&message={quote(message)}", status_code=303
+                )
+            try:
+                email = await google.finish(q["state"], q.get("code", ""))
+            except Exception as exc:
+                return RedirectResponse(
+                    f"/#/connectors?google=error&message={quote(str(exc))}", status_code=303
+                )
+            services.bus.publish("connector.connected", name="gmail", method="google", account=email)
+            return RedirectResponse(f"/#/connectors?google=connected&account={quote(email)}", status_code=303)
+        index = services.store.root / "web" / "dist" / "index.html"
+        if index.exists():
+            # never cached, or a rebuilt UI keeps loading old asset hashes
+            return FileResponse(index, headers={"Cache-Control": "no-cache"})
+        return HTMLResponse(_NO_WEB)
+
     dist = services.store.root / "web" / "dist"
     if (dist / "index.html").exists():
         app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
@@ -58,10 +84,5 @@ def create_app(services: Services | None = None) -> FastAPI:
             return FileResponse(
                 dist / "index.html", headers={"Cache-Control": "no-cache"}
             )  # client-side routing
-    else:
-
-        @app.get("/", include_in_schema=False)
-        async def no_web() -> HTMLResponse:
-            return HTMLResponse(_NO_WEB)
 
     return app

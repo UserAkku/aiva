@@ -55,8 +55,21 @@ export interface Status {
   esp32: { websocket: string; ota: string };
 }
 
+export interface GoogleInfo {
+  client_configured: boolean;
+  connected: boolean;
+  email: string;
+  expired: boolean;
+}
+
 export interface Connectors {
-  gmail: { configured: boolean; account: string; error: string | null };
+  gmail: {
+    configured: boolean;
+    account: string;
+    error: string | null;
+    method: "google" | "app_password" | null;
+    google: GoogleInfo;
+  };
   mcp: Array<{ name: string; transport: string; target: string; enabled: boolean; error: string | null; tools: string[] }>;
   mcp_presets: Record<string, { description: string; config: Record<string, unknown> }>;
 }
@@ -110,6 +123,9 @@ export const api = {
   connectGmail: (address: string, app_password: string) =>
     request<{ ok: boolean; message: string }>("POST", "/api/connectors/gmail", { address, app_password }),
   disconnectGmail: () => request("DELETE", "/api/connectors/gmail"),
+  googleSetClient: (config: string) => request<GoogleInfo>("POST", "/api/connectors/google/client", { config }),
+  googleStart: () => request<{ url: string }>("POST", "/api/connectors/google/start"),
+  googleDisconnect: () => request("DELETE", "/api/connectors/google"),
   addMcp: (name: string, config: Record<string, unknown>) => request<{ ok: boolean; name: string }>("POST", "/api/connectors/mcp", { name, config }),
   testMcp: (name: string) => request<{ ok: boolean; tools: string[] }>("POST", `/api/connectors/mcp/${name}/test`),
   removeMcp: (name: string) => request("DELETE", `/api/connectors/mcp/${name}`),
