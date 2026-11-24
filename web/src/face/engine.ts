@@ -1,88 +1,201 @@
 /**
- * FaceEngine — AIVA's animated OLED face (128×64, 1-bit).
+ * FaceEngine v2 — AIVA's animated OLED face (128×64, 1-bit).
  *
- * Inputs: emotion (from the LLM's tags), mode (idle/listening/thinking/speaking),
- * live audio level (lip sync), VAD (user is talking) and one-shot animations.
- * Behaviours borrowed from esp32-eyes: eased transitions between eye presets,
- * random blinks, random saccades with a perspective squash. Added for AIVA: a
- * mouth, special eyes (hearts, winks, shades, dizzy spirals) and little extras
- * (tears, blush, Zzz, thinking dots). Pure TypeScript, no DOM: easy to port to C++.
+ * Eyes: Cozmo-style procedural eyes (see procedural.ts) whose 43 parameters are all
+ * driven by springs, so every change has weight and a touch of overshoot.
+ * Mouth: a continuously morphing shape (curve, opening, width, skew, roundness,
+ * tongue) instead of fixed sprites, lip-synced to the speaker level.
+ * Life: blinks (sometimes double), saccades with perspective, and per-emotion
+ * behaviours — laughter bounces, anger trembles, confusion tilts the head, sadness
+ * droops, thinking looks up and away, listening leans in and widens with your voice.
+ * Pure TypeScript, no DOM, so it can be ported to the ESP32 firmware.
  */
 import { Framebuffer } from "./framebuffer";
-import { type Animation, EXPRESSIONS, type EyeConfig, EYES, type EyeStyle, type Expression, type Extra, type MouthShape } from "./presets";
+import {
+  COZMO,
+  E_CX,
+  E_CY,
+  E_SX,
+  E_SY,
+  E_UL_Y,
+  E_LL_Y,
+  F_ANGLE,
+  F_CX,
+  F_CY,
+  fromPatch,
+  LEFT,
+  type Layout,
+  merge,
+  type Params,
+  type Patch,
+  RIGHT,
+  eyeCenter,
+  eyeHalfHeight,
+  renderEyes,
+} from "./procedural";
+import type { Animation } from "./presets";
 
 export type FaceMode = "idle" | "listening" | "thinking" | "speaking" | "sleeping" | "offline";
 
-const W = 128;
-const H = 64;
-const EYE_SCALE = 0.72;
-const EYE_Y = 23;
-const LEFT_X = 40;
-const RIGHT_X = 88;
-const MOUTH_X = 64;
-const MOUTH_Y = 52;
+type Glyph = "heart" | "closed" | "x" | "spiral" | "star";
+type Extra = "blush" | "tears" | "zzz" | "sweat" | "dots" | "question" | "anger" | "shades" | "sparkle" | "heart";
+
+/** Mouth targets: curve −1 frown…+1 smile · open 0…1 · width 0…1 · skew −1…1 · round 0…1 · tongue 0/1. */
+interface Mouth {
+  curve: number;
+  open: number;
+  width: number;
+  skew: number;
+  round: number;
+  tongue: number;
+}
+
+interface Look {
+  eyes: Patch;
+  mouth: Partial<Mouth>;
+  glyph?: { left?: Glyph; right?: Glyph };
+  extras?: Extra[];
+  /** idle behaviour while this expression holds */
+  behave?: "bounce" | "bob" | "tremble" | "tilt" | "droop" | "wander" | "pulse";
+}
+
+const M = (m: Partial<Mouth>) => m;
+
+/** AIVA's 21 emotions (xiaozhi vocabulary) built on the Expressive Eyes set. */
+const LOOKS: Record<string, Look> = {
+  neutral: { eyes: COZMO.neutral, mouth: M({ curve: 0.15, width: 0.45 }) },
+  happy: { eyes: COZMO.happiness, mouth: M({ curve: 0.9, width: 0.8, open: 0.08 }), behave: "bob" },
+  laughing: {
+    eyes: merge(COZMO.happiness, { both: { llY: 0.55, llBend: 0.7, sx: 1.05 } }),
+    mouth: M({ curve: 0.9, open: 0.85, width: 1 }),
+    behave: "bounce",
+  },
+  funny: {
+    eyes: merge(COZMO.excitement, { face: { angle: -6 } }),
+    mouth: M({ curve: 0.8, open: 0.5, width: 0.9, tongue: 1 }),
+    extras: ["sweat"],
+    behave: "bounce",
+  },
+  sad: { eyes: merge(COZMO.sadness, { face: { cy: 18 } }), mouth: M({ curve: -0.75, width: 0.55 }), behave: "droop" },
+  angry: {
+    eyes: merge(COZMO.anger, { both: { llY: 0.12 } }),
+    mouth: M({ curve: -0.55, width: 0.75, open: 0.12 }),
+    extras: ["anger"],
+    behave: "tremble",
+  },
+  crying: {
+    eyes: merge(COZMO.despair, { face: { cy: 14 } }),
+    mouth: M({ curve: -0.9, open: 0.45, width: 0.7 }),
+    extras: ["tears"],
+    behave: "tremble",
+  },
+  loving: {
+    eyes: COZMO.happiness,
+    mouth: M({ curve: 0.75, width: 0.6 }),
+    glyph: { left: "heart", right: "heart" },
+    extras: ["blush"],
+    behave: "pulse",
+  },
+  embarrassed: { eyes: COZMO.embarrassment, mouth: M({ curve: 0.15, width: 0.4, skew: 0.35 }), extras: ["blush", "sweat"], behave: "droop" },
+  surprised: {
+    eyes: merge(COZMO.surprise, { both: { uirx: 0.8, uiry: 0.8, uorx: 0.8, uory: 0.8, lirx: 0.8, liry: 0.8, lorx: 0.8, lory: 0.8 } }),
+    mouth: M({ round: 1, open: 0.55, width: 0.25 }),
+    extras: ["sparkle"],
+  },
+  shocked: {
+    eyes: merge(COZMO.horror, { both: { sx: 1.2, sy: 1.25 } }),
+    mouth: M({ round: 1, open: 0.95, width: 0.35 }),
+    extras: ["sweat"],
+    behave: "tremble",
+  },
+  thinking: {
+    eyes: merge(COZMO.skepticism, { face: { cx: -22, cy: -34 } }),
+    mouth: M({ curve: 0.1, skew: -0.75, width: 0.45 }),
+    extras: ["dots"],
+    behave: "wander",
+  },
+  winking: {
+    eyes: merge(COZMO.happiness, { right: { sy: 0.18, llY: 0.6, llBend: 0.9 } }),
+    mouth: M({ curve: 1, width: 0.85, skew: 0.2 }),
+  },
+  cool: { eyes: COZMO.boredom, mouth: M({ curve: 0.45, width: 0.6, skew: 0.75 }), extras: ["shades"] },
+  relaxed: { eyes: merge(COZMO.tiredness, { both: { ulY: 0.25, llY: 0.3, llBend: 0.35 } }), mouth: M({ curve: 0.55, width: 0.65 }), behave: "bob" },
+  delicious: { eyes: COZMO.excitement, mouth: M({ curve: 0.85, width: 0.7, open: 0.25, tongue: 1 }), behave: "bob" },
+  kissy: {
+    eyes: merge(COZMO.happiness, { both: { sy: 0.35, llY: 0.6, llBend: 0.8 } }),
+    mouth: M({ round: 1, open: 0.3, width: 0.15 }),
+    extras: ["blush", "heart"],
+  },
+  confident: { eyes: COZMO.skepticism, mouth: M({ curve: 0.55, width: 0.65, skew: 0.65 }) },
+  sleepy: { eyes: COZMO.tiredness, mouth: M({ round: 0.8, open: 0.3, width: 0.25 }), extras: ["zzz"], behave: "droop" },
+  silly: {
+    eyes: merge(COZMO.confusion, { face: { angle: 8 }, left: { sx: 1.15, sy: 1.15 }, right: { sx: 0.75, sy: 0.75 } }),
+    mouth: M({ curve: 0.7, open: 0.3, width: 0.75, skew: -0.3, tongue: 1 }),
+    behave: "tilt",
+  },
+  confused: { eyes: COZMO.confusion, mouth: M({ curve: -0.15, width: 0.5, skew: 0.6 }), extras: ["question"], behave: "tilt" },
+};
+
+const NEUTRAL_MOUTH: Mouth = { curve: 0.15, open: 0, width: 0.45, skew: 0, round: 0, tongue: 0 };
 const SLEEP_AFTER_MS = 3 * 60 * 1000;
+const MOUTH_Y = 53;
+const LAYOUT: Layout = { scale: 0.8, dy: -8 };
 
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-const ease = (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+/** Critically-ish damped springs over a vector of values. */
+class SpringVec {
+  value: Float32Array;
+  velocity: Float32Array;
+  constructor(init: ArrayLike<number>) {
+    this.value = Float32Array.from(init);
+    this.velocity = new Float32Array(init.length);
+  }
+  step(target: ArrayLike<number>, dt: number, stiffness: number, damping: number, fast?: (i: number) => boolean): void {
+    const n = this.value.length;
+    for (let i = 0; i < n; i++) {
+      const k = fast?.(i) ? stiffness * 4 : stiffness;
+      const d = fast?.(i) ? damping * 2 : damping;
+      const a = k * (target[i] - this.value[i]) - d * this.velocity[i];
+      this.velocity[i] += a * dt;
+      this.value[i] += this.velocity[i] * dt;
+    }
+  }
+}
+
 const rand = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
-
-function lerpEye(a: EyeConfig, b: EyeConfig, t: number): EyeConfig {
-  return {
-    offsetX: lerp(a.offsetX, b.offsetX, t),
-    offsetY: lerp(a.offsetY, b.offsetY, t),
-    height: lerp(a.height, b.height, t),
-    width: lerp(a.width, b.width, t),
-    slopeTop: lerp(a.slopeTop, b.slopeTop, t),
-    slopeBottom: lerp(a.slopeBottom, b.slopeBottom, t),
-    radiusTop: lerp(a.radiusTop, b.radiusTop, t),
-    radiusBottom: lerp(a.radiusBottom, b.radiusBottom, t),
-  };
-}
-
-/** esp32-eyes mirroring: the left eye mirrors X offset, the right eye mirrors slopes. */
-function placed(cfg: EyeConfig, mirrored: boolean): EyeConfig {
-  return {
-    ...cfg,
-    offsetX: (mirrored ? -cfg.offsetX : cfg.offsetX) * EYE_SCALE,
-    offsetY: -cfg.offsetY * EYE_SCALE,
-    width: cfg.width * EYE_SCALE,
-    height: cfg.height * EYE_SCALE,
-    radiusTop: cfg.radiusTop * EYE_SCALE,
-    radiusBottom: cfg.radiusBottom * EYE_SCALE,
-    slopeTop: mirrored ? cfg.slopeTop : -cfg.slopeTop,
-    slopeBottom: mirrored ? cfg.slopeBottom : -cfg.slopeBottom,
-  };
-}
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 export class FaceEngine {
-  readonly fb = new Framebuffer(W, H);
+  readonly fb = new Framebuffer(128, 64);
   private emotion = "neutral";
   private emotionUntil = 0;
   private mode: FaceMode = "idle";
   private userTalking = false;
   private level = 0;
-  private mouthOpen = 0;
-  private from = { l: placed(EYES.normal, true), r: placed(EYES.normal, false) };
-  private to = { l: placed(EYES.normal, true), r: placed(EYES.normal, false) };
-  private transitionStart = 0;
-  private transitionMs = 260;
-  private look = { x: 0, y: 0, fx: 0, fy: 0, tx: 0, ty: 0, start: 0, dur: 1 };
-  private nextLookAt = 0;
+  private eyes = new SpringVec(fromPatch(COZMO.neutral));
+  private mouth = new SpringVec(Object.values(NEUTRAL_MOUTH));
+  private base: Params = fromPatch(COZMO.neutral);
+  private look = { x: 0, y: 0, next: 0 };
   private blinkStart = -1e9;
-  private nextBlinkAt = 0;
+  private nextBlink = 0;
   private anim: { name: Animation; start: number; dur: number } | null = null;
   private lastActivity = performance.now();
+  private lastFrame = performance.now();
+  private jitter = { x: 0, y: 0, next: 0 };
+  private talkPhase = 0;
   private now = 0;
+  /** show a mouth (AIVA's original design); false = Cozmo-style eyes only */
+  showMouth = true;
 
   // ── inputs ─────────────────────────────────────────────────────────────────
   setEmotion(name: string, holdMs = 0): void {
-    if (!EXPRESSIONS[name]) name = "neutral";
+    if (!LOOKS[name]) name = "neutral";
     this.poke();
     this.emotionUntil = holdMs > 0 ? performance.now() + holdMs : 0;
-    if (name === this.emotion) return;
-    this.emotion = name;
-    this.retarget();
+    if (name !== this.emotion) {
+      this.emotion = name;
+      // a little "pop" on every change of mind: kick the springs
+      for (const e of [LEFT, RIGHT]) this.eyes.velocity[e + E_SY] += 2.2;
+    }
   }
 
   getEmotion(): string {
@@ -95,17 +208,15 @@ export class FaceEngine {
     this.mode = mode;
     if (mode !== "idle" && mode !== "sleeping") this.poke();
     if (wasSleeping && mode !== "sleeping") this.play("wake_up");
-    if (mode === "listening" && this.emotion !== "neutral" && !this.emotionUntil) this.setEmotion("neutral");
-    this.retarget();
+    if (mode === "listening" && !this.emotionUntil) this.emotion = "neutral";
   }
 
   getMode(): FaceMode {
     return this.mode;
   }
 
-  /** Speaker output level 0..1 (drives the mouth while speaking). */
   setLevel(level: number): void {
-    this.level = Math.max(0, Math.min(1, level));
+    this.level = clamp(level, 0, 1);
   }
 
   setUserTalking(talking: boolean): void {
@@ -114,464 +225,356 @@ export class FaceEngine {
   }
 
   play(name: Animation): void {
-    const durations: Record<Animation, number> = {
-      dance: 2600, wink: 700, blink: 220, look_around: 2400, nod: 1300, shake_head: 1300,
-      laugh: 1800, love: 2200, sleep: 0, wake_up: 1100, dizzy: 2200,
+    const dur: Record<Animation, number> = {
+      dance: 2800, wink: 800, blink: 200, look_around: 2400, nod: 1300, shake_head: 1300,
+      laugh: 1900, love: 2400, sleep: 0, wake_up: 1200, dizzy: 2400,
     };
     this.poke();
     if (name === "sleep") {
       this.mode = "sleeping";
-      this.retarget();
       return;
     }
     if (name === "blink") {
       this.blinkStart = performance.now();
       return;
     }
-    this.anim = { name, start: performance.now(), dur: durations[name] };
-    this.retarget();
+    this.anim = { name, start: performance.now(), dur: dur[name] };
   }
 
   poke(): void {
     this.lastActivity = performance.now();
   }
 
-  // ── expression resolution ──────────────────────────────────────────────────
-  private expression(): Expression {
+  // ── resolve what the face should look like right now ──────────────────────
+  private current(): Look {
     const a = this.anim?.name;
-    if (this.mode === "offline") return { left: "normal", right: "normal", leftStyle: "x", rightStyle: "x", mouth: "flat" };
-    if (this.mode === "sleeping") return { left: "sleepyAlt", right: "sleepyAlt", leftStyle: "closed", rightStyle: "closed", mouth: "none", extras: ["zzz"] };
-    if (a === "love") return EXPRESSIONS.loving;
-    if (a === "laugh") return EXPRESSIONS.laughing;
-    if (a === "dance") return { left: "happy", right: "happy", mouth: "bigSmile" };
-    if (a === "dizzy") return { left: "normal", right: "normal", leftStyle: "spiral", rightStyle: "spiral", mouth: "wavy" };
-    if (a === "wink") return { ...EXPRESSIONS.winking };
-    const base = EXPRESSIONS[this.emotion] ?? EXPRESSIONS.neutral;
-    if (this.mode === "thinking" && this.emotion === "neutral") return EXPRESSIONS.thinking;
-    return base;
+    if (this.mode === "offline") return { eyes: COZMO.neutral, mouth: M({ curve: -0.2, width: 0.4 }), glyph: { left: "x", right: "x" } };
+    if (this.mode === "sleeping") return { eyes: COZMO.asleep, mouth: M({ round: 0.6, open: 0.15, width: 0.2 }), glyph: { left: "closed", right: "closed" }, extras: ["zzz"] };
+    if (a === "love") return LOOKS.loving;
+    if (a === "laugh") return LOOKS.laughing;
+    if (a === "wink") return LOOKS.winking;
+    if (a === "dance") return { ...LOOKS.happy, behave: undefined };
+    if (a === "dizzy") return { eyes: COZMO.neutral, mouth: M({ curve: -0.1, width: 0.6, skew: 0.5 }), glyph: { left: "spiral", right: "spiral" } };
+    if (this.mode === "thinking" && this.emotion === "neutral") return LOOKS.thinking;
+    if (this.mode === "listening" && this.emotion === "neutral") {
+      return { eyes: merge(COZMO.neutral, { both: { sx: this.userTalking ? 0.95 : 0.88, sy: this.userTalking ? 0.95 : 0.88 }, face: { angle: -4 } }), mouth: M({ curve: 0.25, width: 0.4 }) };
+    }
+    return LOOKS[this.emotion] ?? LOOKS.neutral;
   }
 
-  private retarget(): void {
-    const exp = this.expression();
-    const now = performance.now();
-    const t = ease((now - this.transitionStart) / this.transitionMs);
-    this.from = { l: lerpEye(this.from.l, this.to.l, t), r: lerpEye(this.from.r, this.to.r, t) };
-    this.to = { l: placed(EYES[exp.left], true), r: placed(EYES[exp.right], false) };
-    this.transitionStart = now;
-  }
-
-  // ── per-frame update ───────────────────────────────────────────────────────
   render(now = performance.now()): Framebuffer {
     this.now = now;
+    const dt = clamp((now - this.lastFrame) / 1000, 0.001, 0.05);
+    this.lastFrame = now;
     if (this.emotionUntil && now > this.emotionUntil) {
       this.emotionUntil = 0;
       this.emotion = "neutral";
-      this.retarget();
     }
-    if (this.anim && now - this.anim.start > this.anim.dur) {
-      this.anim = null;
-      this.retarget();
-    }
-    if (this.mode === "idle" && now - this.lastActivity > SLEEP_AFTER_MS) {
-      this.mode = "sleeping";
-      this.retarget();
-    }
-    this.updateLook(now);
-    this.updateBlink(now);
-    const target = this.mode === "speaking" ? Math.min(1, this.level * 3.2) : 0;
-    this.mouthOpen = this.mouthOpen * 0.55 + target * 0.45;
+    if (this.anim && now - this.anim.start > this.anim.dur) this.anim = null;
+    if (this.mode === "idle" && now - this.lastActivity > SLEEP_AFTER_MS) this.mode = "sleeping";
 
-    const exp = this.expression();
-    const t = ease((now - this.transitionStart) / this.transitionMs);
-    let left = lerpEye(this.from.l, this.to.l, t);
-    let right = lerpEye(this.from.r, this.to.r, t);
-    [left, right] = this.applyLook(left, right);
-    const bt = this.blinkAmount(now);
-    if (bt > 0) {
-      left = this.applyBlink(left, bt);
-      right = this.applyBlink(right, bt);
-    }
-    let dx = 0;
-    let dy = 0;
-    let scale = this.mode === "listening" ? (this.userTalking ? 1.1 : 1.04) : 1;
-    if (this.mode === "sleeping") dy = Math.sin(now / 900) * 1.2;
-    if (this.anim) {
-      const p = (now - this.anim.start) / this.anim.dur;
-      switch (this.anim.name) {
-        case "dance":
-          dx = Math.sin(p * Math.PI * 6) * 10;
-          dy = -Math.abs(Math.sin(p * Math.PI * 12)) * 5;
-          break;
-        case "nod":
-          dy = Math.sin(p * Math.PI * 4) * 5;
-          break;
-        case "shake_head":
-          dx = Math.sin(p * Math.PI * 6) * 9 * (1 - p);
-          break;
-        case "laugh":
-          dy = -Math.abs(Math.sin(p * Math.PI * 10)) * 3;
-          break;
-        case "love":
-          scale = 1 + Math.abs(Math.sin(p * Math.PI * 4)) * 0.18;
-          break;
-        case "wake_up":
-          left = { ...left, height: left.height * ease(p) + 1 };
-          right = { ...right, height: right.height * ease(p) + 1 };
-          break;
-      }
-    }
+    const look = this.current();
+    // target eye params = expression + gaze + behaviour
+    this.base = fromPatch(look.eyes);
+    const target = Float32Array.from(this.base);
+    this.applyGaze(target, now, look);
+    this.applyBehaviour(target, now, look);
+    this.applyAnimation(target, now);
+    const isPosition = (i: number) => i === F_CX || i === F_CY || i === LEFT + E_CX || i === LEFT + E_CY || i === RIGHT + E_CX || i === RIGHT + E_CY;
+    this.eyes.step(target, dt, 210, 21, isPosition);
 
+    // mouth target (+ lip-sync)
+    const m: Mouth = { ...NEUTRAL_MOUTH, ...look.mouth };
+    if (this.mode === "speaking") {
+      this.talkPhase += dt * (8 + this.level * 10);
+      const syllable = 0.65 + 0.35 * Math.sin(this.talkPhase * 2.3);
+      m.open = clamp(m.open * 0.4 + Math.min(1, this.level * 3.2) * syllable, 0, 1);
+      m.round = m.round * 0.6 + (0.5 + 0.5 * Math.sin(this.talkPhase * 1.3)) * 0.25;
+    }
+    this.mouth.step(Object.values(m), dt, 320, 26);
+
+    // ── draw ──
     const fb = this.fb;
     fb.clear();
-    this.drawEye(LEFT_X + dx, EYE_Y + dy, left, exp.leftStyle ?? "shape", scale, true);
-    this.drawEye(RIGHT_X + dx, EYE_Y + dy, right, exp.rightStyle ?? "shape", scale, false);
-    for (const extra of exp.extras ?? []) this.drawExtra(extra, dx, dy, left, right);
-    this.drawMouth(exp.mouth, MOUTH_X + dx * 0.6, MOUTH_Y + dy * 0.5);
+    const p = this.eyes.value;
+    const blink = this.blinkAmount(now);
+    const glyph = look.glyph ?? {};
+    const layout: Layout = this.showMouth ? LAYOUT : { scale: 1, dy: 0 };
+    renderEyes(fb.pixels, p, layout, { blink }, { left: !!glyph.left, right: !!glyph.right });
+    for (const side of ["left", "right"] as const) {
+      const g = glyph[side];
+      if (g) this.drawGlyph(g, ...eyeCenter(p, layout, side), side === "left");
+    }
+    for (const extra of look.extras ?? []) this.drawExtra(extra, p, layout);
+    if (this.showMouth) this.drawMouth(p);
     this.drawIndicators(now);
     return fb;
   }
 
-  private updateLook(now: number): void {
-    const lk = this.look;
-    if (now >= this.nextLookAt) {
-      const exp = this.expression();
-      let tx = 0;
-      let ty = 0;
-      if (this.anim?.name === "look_around") {
-        const p = (now - this.anim.start) / this.anim.dur;
-        [tx, ty] = p < 0.25 ? [-0.8, 0] : p < 0.5 ? [0.8, 0] : p < 0.75 ? [0, 0.6] : [0, 0];
-        this.nextLookAt = now + 450;
-      } else if (exp.look) {
-        [tx, ty] = exp.look;
-        this.nextLookAt = now + rand(1500, 3000);
-      } else if (this.mode === "listening") {
-        tx = rand(-0.12, 0.12);
-        ty = rand(-0.1, 0.1);
-        this.nextLookAt = now + rand(1200, 2500);
+  // ── motion layers ──────────────────────────────────────────────────────────
+  private applyGaze(t: Params, now: number, look: Look): void {
+    if (now >= this.look.next) {
+      if (this.mode === "listening") {
+        this.look.x = rand(-6, 6);
+        this.look.y = rand(-10, 6);
+        this.look.next = now + rand(1200, 2600);
       } else if (this.mode === "speaking") {
-        tx = rand(-0.25, 0.25);
-        ty = rand(-0.15, 0.15);
-        this.nextLookAt = now + rand(900, 2000);
-      } else if (this.mode === "sleeping") {
-        this.nextLookAt = now + 5000;
+        this.look.x = rand(-10, 10);
+        this.look.y = rand(-14, 10);
+        this.look.next = now + rand(900, 2200);
+      } else if (this.mode === "sleeping" || look.behave === "wander") {
+        this.look.x = this.mode === "sleeping" ? 0 : rand(-8, 8);
+        this.look.y = this.mode === "sleeping" ? 0 : rand(-8, 8);
+        this.look.next = now + rand(1500, 2800);
       } else {
-        tx = Math.random() < 0.35 ? 0 : rand(-0.6, 0.6);
-        ty = Math.random() < 0.5 ? 0 : rand(-0.45, 0.45);
-        this.nextLookAt = now + rand(1400, 4200);
+        // pycozmo-style saccade: jump somewhere, pause, sometimes come back to centre
+        const centre = Math.random() < 0.35;
+        this.look.x = centre ? 0 : rand(-22, 22);
+        this.look.y = centre ? 0 : rand(-40, 40);
+        this.look.next = now + rand(900, 3600);
       }
-      lk.fx = lk.x;
-      lk.fy = lk.y;
-      lk.tx = tx;
-      lk.ty = ty;
-      lk.start = now;
-      lk.dur = 160;
     }
-    const t = ease((now - lk.start) / lk.dur);
-    lk.x = lerp(lk.fx, lk.tx, t);
-    lk.y = lerp(lk.fy, lk.ty, t);
+    t[F_CX] += this.look.x;
+    t[F_CY] += this.look.y;
+    // perspective: the eye on the side we look toward grows, the other shrinks
+    const k = this.look.x / 22;
+    const near = k < 0 ? LEFT : RIGHT;
+    const far = k < 0 ? RIGHT : LEFT;
+    t[near + E_SX] *= 1 + Math.abs(k) * 0.1;
+    t[near + E_SY] *= 1 + Math.abs(k) * 0.1;
+    t[far + E_SX] *= 1 - Math.abs(k) * 0.08;
+    t[far + E_SY] *= 1 - Math.abs(k) * 0.08;
   }
 
-  /** esp32-eyes LookAt: move both eyes; the eye on the side we look toward grows slightly. */
-  private applyLook(left: EyeConfig, right: EyeConfig): [EyeConfig, EyeConfig] {
-    const { x, y } = this.look;
-    const moveX = -16 * x;
-    const moveY = 7 * y;
-    const squashY = 1 - Math.abs(y) * 0.3;
-    return [
-      { ...left, offsetX: left.offsetX + moveX, offsetY: left.offsetY - moveY, height: left.height * (1 + x * 0.2) * squashY },
-      { ...right, offsetX: right.offsetX + moveX, offsetY: right.offsetY - moveY, height: right.height * (1 - x * 0.2) * squashY },
-    ];
+  private applyBehaviour(t: Params, now: number, look: Look): void {
+    const s = now / 1000;
+    switch (look.behave) {
+      case "bounce":
+        t[F_CY] += -Math.abs(Math.sin(s * 11)) * 16;
+        break;
+      case "bob":
+        t[F_CY] += Math.sin(s * 2.6) * 5;
+        break;
+      case "tremble":
+        if (now > this.jitter.next) {
+          this.jitter = { x: rand(-2.2, 2.2), y: rand(-3, 3), next: now + 70 };
+        }
+        t[F_CX] += this.jitter.x;
+        t[F_CY] += this.jitter.y;
+        break;
+      case "tilt":
+        t[F_ANGLE] += Math.sin(s * 1.4) > 0 ? 6 : -4;
+        break;
+      case "droop":
+        t[F_CY] += 10 + Math.sin(s * 0.8) * 3;
+        for (const e of [LEFT, RIGHT]) t[e + E_UL_Y] += 0.06 + 0.04 * Math.sin(s * 0.6);
+        break;
+      case "pulse": {
+        const k = 1 + Math.abs(Math.sin(s * 4)) * 0.12;
+        for (const e of [LEFT, RIGHT]) {
+          t[e + E_SX] *= k;
+          t[e + E_SY] *= k;
+        }
+        break;
+      }
+    }
+    if (this.mode === "speaking") {
+      // eyes "smile" a little on loud syllables, like a real speaker's face
+      for (const e of [LEFT, RIGHT]) t[e + E_LL_Y] += Math.min(0.12, this.level * 0.35);
+    }
+    if (this.mode === "listening" && this.userTalking) {
+      for (const e of [LEFT, RIGHT]) {
+        t[e + E_SX] *= 1.04;
+        t[e + E_SY] *= 1.04;
+      }
+    }
+    if (this.mode === "sleeping") t[F_CY] += Math.sin(s * 1.2) * 4;
   }
 
-  private updateBlink(now: number): void {
-    if (this.mode === "sleeping" || this.mode === "offline") return;
-    if (now >= this.nextBlinkAt) {
-      this.blinkStart = now;
-      const double = Math.random() < 0.15;
-      this.nextBlinkAt = now + (double ? 260 : rand(2200, 6000));
+  private applyAnimation(t: Params, now: number): void {
+    if (!this.anim) return;
+    const p = (now - this.anim.start) / this.anim.dur;
+    switch (this.anim.name) {
+      case "dance":
+        t[F_CX] += Math.sin(p * Math.PI * 6) * 26;
+        t[F_CY] += -Math.abs(Math.sin(p * Math.PI * 12)) * 22;
+        t[F_ANGLE] += Math.sin(p * Math.PI * 6) * 10;
+        break;
+      case "nod":
+        t[F_CY] += Math.sin(p * Math.PI * 4) * 22;
+        break;
+      case "shake_head":
+        t[F_CX] += Math.sin(p * Math.PI * 6) * 30 * (1 - p);
+        break;
+      case "look_around": {
+        const [x, y] = p < 0.25 ? [-30, 0] : p < 0.5 ? [30, 0] : p < 0.75 ? [0, -45] : [0, 0];
+        t[F_CX] += x;
+        t[F_CY] += y;
+        break;
+      }
+      case "wake_up":
+        for (const e of [LEFT, RIGHT]) t[e + E_UL_Y] = Math.max(t[e + E_UL_Y], 0.8 * (1 - p));
+        break;
     }
   }
 
   private blinkAmount(now: number): number {
-    const p = (now - this.blinkStart) / 180;
+    if (this.mode === "sleeping" || this.mode === "offline") return 0;
+    if (now >= this.nextBlink) {
+      this.blinkStart = now;
+      const double = Math.random() < 0.18;
+      const sleepy = this.emotion === "sleepy" || this.emotion === "sad";
+      this.nextBlink = now + (double ? 280 : sleepy ? rand(1800, 3500) : rand(2400, 6200));
+    }
+    const dur = this.emotion === "sleepy" ? 420 : 170;
+    const p = (now - this.blinkStart) / dur;
     if (p < 0 || p > 1) return 0;
-    return Math.sin(p * Math.PI) ** 2;
+    return Math.sin(p * Math.PI) ** 1.5;
   }
 
-  private applyBlink(cfg: EyeConfig, t: number): EyeConfig {
-    return {
-      ...cfg,
-      height: lerp(cfg.height, 2, t),
-      width: lerp(cfg.width, cfg.width * 1.15, t),
-      slopeTop: cfg.slopeTop * (1 - t),
-      slopeBottom: cfg.slopeBottom * (1 - t),
-      radiusTop: cfg.radiusTop * (1 - t),
-      radiusBottom: cfg.radiusBottom * (1 - t),
-    };
-  }
-
-  // ── drawing ────────────────────────────────────────────────────────────────
-  private drawEye(cx: number, cy: number, cfg: EyeConfig, style: EyeStyle, scale: number, isLeft: boolean): void {
+  // ── drawing helpers ────────────────────────────────────────────────────────
+  private drawGlyph(g: Glyph, x: number, y: number, isLeft: boolean): void {
     const fb = this.fb;
-    const c = { ...cfg, width: cfg.width * scale, height: cfg.height * scale };
-    const x = cx + c.offsetX;
-    const y = cy + c.offsetY;
-    switch (style) {
-      case "heart":
-        fb.heart(x, y + 1, 24 * scale);
-        return;
-      case "closedHappy": // ^ shaped closed eye
-        fb.curve(arc(x, y + 4, 11, -7), 1, 3);
-        return;
-      case "closed":
-        fb.box(x - 11, y, x + 11, y + 2);
-        return;
+    switch (g) {
+      case "heart": {
+        const pulse = 1 + Math.abs(Math.sin(this.now / 260)) * 0.15;
+        fb.heart(x, y + 1, 24 * pulse);
+        break;
+      }
+      case "closed": // gentle closed-eye arc ‿
+        fb.curve(arc(x, y - 1, 10, 4), 1, 2);
+        break;
       case "x":
         fb.line(x - 7, y - 7, x + 7, y + 7, 1, 2);
         fb.line(x - 7, y + 7, x + 7, y - 7, 1, 2);
-        return;
+        break;
       case "spiral": {
-        const turn = this.now / 140 * (isLeft ? 1 : -1);
+        const turn = (this.now / 140) * (isLeft ? 1 : -1);
         const pts: Array<[number, number]> = [];
         for (let i = 0; i <= 40; i++) {
           const a = turn + i * 0.45;
-          const r = i * 0.33;
-          pts.push([x + Math.cos(a) * r, y + Math.sin(a) * r]);
+          pts.push([x + Math.cos(a) * i * 0.33, y + Math.sin(a) * i * 0.33]);
         }
         fb.curve(pts, 1, 2);
-        return;
+        break;
       }
       case "star":
         fb.triangle(x, y - 10, x - 8, y + 6, x + 8, y + 6);
         fb.triangle(x, y + 10, x - 8, y - 5, x + 8, y - 5);
-        return;
-      default:
-        this.drawShapeEye(cx, cy, c);
+        break;
     }
   }
 
-  /** Port of esp32-eyes EyeDrawer::Draw (rounded, sloped eye made of boxes, triangles, corners). */
-  private drawShapeEye(centerX: number, centerY: number, c: EyeConfig): void {
+  /** A continuous mouth: upper lip curve, opening below it, optional tongue. */
+  private drawMouth(p: Params): void {
     const fb = this.fb;
-    const h = Math.max(1, c.height);
-    const w = Math.max(1, c.width);
-    let rt = Math.max(0, c.radiusTop);
-    let rb = Math.max(0, c.radiusBottom);
-    const dyt = Math.trunc((h * c.slopeTop) / 2);
-    const dyb = Math.trunc((h * c.slopeBottom) / 2);
-    const total = h + dyt - dyb;
-    if (rb > 0 && rt > 0 && total - 1 < rb + rt) {
-      const k = Math.max(0, total - 1) / (rb + rt);
-      rt = Math.trunc(rt * k);
-      rb = Math.trunc(rb * k);
+    const [curve, open, width, skew, round, tongue] = this.mouth.value;
+    const cx = 64 + p[F_CX] * 0.55 * 0.6;
+    const cy = MOUTH_Y + p[F_CY] * 0.25 * 0.35;
+    const halfW = 4 + clamp(width, 0, 1.2) * 10 * (1 - clamp(round, 0, 1) * 0.55);
+    const openPx = clamp(open, 0, 1) * 9;
+    for (let x = -Math.ceil(halfW); x <= Math.ceil(halfW); x++) {
+      const t = x / halfW;
+      if (Math.abs(t) > 1) continue;
+      const bowl = 1 - t * t;
+      const upper = cy + curve * 3.6 * bowl - clamp(round, 0, 1) * openPx * 0.45 * Math.sqrt(bowl) + skew * 2.6 * t;
+      const thick = Math.max(1.6, openPx * Math.pow(bowl, 0.5 + clamp(round, 0, 1) * 0.2));
+      fb.box(cx + x, upper, cx + x + 1, upper + thick);
     }
-    rt = Math.round(rt);
-    rb = Math.round(rb);
-    const cx = centerX + c.offsetX;
-    const cy = centerY + c.offsetY;
-    const TLy = Math.round(cy - h / 2 + rt - dyt);
-    const TLx = Math.round(cx - w / 2 + rt);
-    const TRy = Math.round(cy - h / 2 + rt + dyt);
-    const TRx = Math.round(cx + w / 2 - rt);
-    const BLy = Math.round(cy + h / 2 - rb - dyb);
-    const BLx = Math.round(cx - w / 2 + rb);
-    const BRy = Math.round(cy + h / 2 - rb + dyb);
-    const BRx = Math.round(cx + w / 2 - rb);
-
-    fb.box(Math.min(TLx, BLx), Math.min(TLy, TRy), Math.max(TRx, BRx), Math.max(BLy, BRy));
-    fb.box(TRx, TRy, BRx + rb, BRy);
-    fb.box(TLx - rt, TLy, BLx, BLy);
-    fb.box(TLx, TLy - rt, TRx, TRy);
-    fb.box(BLx, BLy, BRx, BRy + rb);
-
-    if (c.slopeTop > 0) {
-      fb.rightTriangle(TLx, TLy - rt, TRx, TRy - rt, 0);
-      fb.rightTriangle(TRx, TRy - rt, TLx, TLy - rt, 1);
-    } else if (c.slopeTop < 0) {
-      fb.rightTriangle(TRx, TRy - rt, TLx, TLy - rt, 0);
-      fb.rightTriangle(TLx, TLy - rt, TRx, TRy - rt, 1);
-    }
-    if (c.slopeBottom > 0) {
-      fb.rightTriangle(BRx + rb, BRy + rb, BLx - rb, BLy + rb, 0);
-      fb.rightTriangle(BLx - rb, BLy + rb, BRx + rb, BRy + rb, 1);
-    } else if (c.slopeBottom < 0) {
-      fb.rightTriangle(BLx - rb, BLy + rb, BRx + rb, BRy + rb, 0);
-      fb.rightTriangle(BRx + rb, BRy + rb, BLx - rb, BLy + rb, 1);
-    }
-    if (rt > 0) {
-      fb.corner("TL", TLx, TLy, rt);
-      fb.corner("TR", TRx, TRy, rt);
-    }
-    if (rb > 0) {
-      fb.corner("BL", BLx, BLy, rb);
-      fb.corner("BR", BRx, BRy, rb);
+    if (tongue > 0.5) {
+      // tongue hangs from the lower lip, slightly off-centre (cheeky), joined to the mouth
+      const lip = cy + curve * 3.6 + Math.max(1.6, openPx);
+      fb.ellipse(cx + 2, lip + 1.5, 3.6, 3.4, true);
+      fb.box(cx - 1.5, lip - 1.5, cx + 5.5, lip + 1.5);
     }
   }
 
-  private drawMouth(shape: MouthShape, x: number, y: number): void {
-    const fb = this.fb;
-    const open = this.mouthOpen;
-    const speaking = this.mode === "speaking" && open > 0.04;
-    if (shape === "none") return;
-    if (speaking && !["open", "bigO", "tongue", "kiss"].includes(shape)) {
-      // lip-sync: a rounded mouth that opens with the voice; smiles stay smiley
-      const smiley = shape === "smile" || shape === "bigSmile" || shape === "smirk";
-      const rx = 6 + open * 4;
-      const ry = 1.2 + open * 5.5;
-      if (smiley) {
-        fb.ellipse(x, y - 1 + ry / 2, rx + 2, ry, true);
-        fb.box(x - rx - 3, y - 3, x + rx + 3, y - 1 + ry / 2, 0);
-        fb.box(x - rx - 2, y - 2, x + rx + 3, y - 1);
-      } else {
-        fb.ellipse(x, y, rx, ry, true);
-      }
-      return;
-    }
-    switch (shape) {
-      case "flat":
-        fb.box(x - 7, y, x + 7, y + 2);
-        break;
-      case "smile":
-        fb.curve(arc(x, y - 2, 10, 5), 1, 2);
-        break;
-      case "bigSmile":
-        fb.ellipse(x, y - 2, 11, 7, true);
-        fb.box(x - 12, y - 10, x + 13, y - 2, 0);
-        break;
-      case "open": {
-        const bounce = this.anim?.name === "laugh" ? Math.abs(Math.sin(this.now / 70)) * 2 : 0;
-        fb.ellipse(x, y - 3, 12, 8 + bounce, true);
-        fb.box(x - 13, y - 12, x + 14, y - 3, 0);
-        fb.ellipse(x, y + 3 + bounce * 0.5, 5, 2, true, 0); // tongue shadow
-        break;
-      }
-      case "frown":
-        fb.curve(arc(x, y + 3, 9, -5), 1, 2);
-        break;
-      case "o":
-        fb.ellipse(x, y, 4 + open * 2, 5 + open * 2, false);
-        break;
-      case "bigO":
-        fb.ellipse(x, y, 6, 7, true);
-        fb.ellipse(x, y, 3, 4, true, 0);
-        break;
-      case "wavy": {
-        const pts: Array<[number, number]> = [];
-        for (let i = 0; i <= 22; i++) pts.push([x - 11 + i, y + Math.sin(i * 0.85 + this.now / 300) * 1.6]);
-        fb.curve(pts, 1, 2);
-        break;
-      }
-      case "smirk":
-        fb.line(x - 9, y + 1, x + 4, y + 1, 1, 2);
-        fb.line(x + 4, y + 1, x + 9, y - 3, 1, 2);
-        break;
-      case "tongue":
-        fb.curve(arc(x, y - 3, 10, 4), 1, 2);
-        fb.ellipse(x + 2, y + 3, 4, 4, true);
-        fb.box(x - 3, y - 1, x + 7, y + 1, 1);
-        break;
-      case "kiss":
-        fb.ellipse(x, y - 2, 2.5, 2.5, false);
-        fb.ellipse(x, y + 3, 2.5, 2.5, false);
-        fb.heart(x + 16, y - 6 - ((this.now / 40) % 8), 7);
-        break;
-      case "zigzag": {
-        const pts: Array<[number, number]> = [];
-        for (let i = 0; i <= 6; i++) pts.push([x - 11 + i * 3.7, y + (i % 2 ? -2 : 2)]);
-        fb.curve(pts, 1, 2);
-        break;
-      }
-    }
-  }
-
-  private drawExtra(extra: Extra, dx: number, dy: number, left: EyeConfig, right: EyeConfig): void {
+  private drawExtra(extra: Extra, p: Params, layout: Layout): void {
     const fb = this.fb;
     const now = this.now;
-    const lx = LEFT_X + dx + left.offsetX;
-    const rx = RIGHT_X + dx + right.offsetX;
-    const eyeBottom = EYE_Y + dy + Math.max(left.height, right.height) / 2;
+    const [lx, ly] = eyeCenter(p, layout, "left");
+    const [rx, ry] = eyeCenter(p, layout, "right");
+    const lh = eyeHalfHeight(p, layout, "left");
+    const rh = eyeHalfHeight(p, layout, "right");
     switch (extra) {
       case "blush":
-        for (const bx of [lx - 9, rx + 3]) {
-          for (let i = 0; i < 3; i++) fb.line(bx + i * 3, eyeBottom + 5, bx + i * 3 + 2, eyeBottom + 2, 1, 1);
+        for (const [bx, by] of [[lx - 9, ly + lh + 2], [rx + 3, ry + rh + 2]] as const) {
+          for (let i = 0; i < 3; i++) fb.line(bx + i * 3, by + 3, bx + i * 3 + 2, by, 1, 1);
         }
         break;
       case "tears": {
-        const fall = (now / 18) % 18;
-        for (const tx of [lx - 6, rx + 6]) {
-          fb.ellipse(tx, eyeBottom + fall, 1.6, 2.4, true);
-          fb.set(tx, eyeBottom + fall - 3);
+        const fall = (now / 16) % 16;
+        for (const [tx, ty] of [[lx - 5, ly + lh], [rx + 5, ry + rh]] as const) {
+          fb.ellipse(tx, ty + fall, 1.5, 2.3, true);
+          fb.set(tx, ty + fall - 3);
         }
         break;
       }
       case "zzz": {
-        const t = (now / 1200) % 1;
-        fb.text("Z", 106, 20 - t * 8, 2);
-        fb.text("z", 118, 10 - t * 6, 1);
+        const t = (now / 1300) % 1;
+        fb.text("Z", 104, 18 - t * 8, 2);
+        fb.text("z", 117, 8 - t * 6, 1);
         break;
       }
       case "sweat": {
-        const sx = rx + 16;
-        const sy = EYE_Y - 12 + dy + Math.sin(now / 250);
+        const sx = rx + 17;
+        const sy = ry - 14 + Math.sin(now / 250);
         fb.ellipse(sx, sy + 2, 2.2, 2.6, true);
         fb.triangle(sx - 2, sy + 1, sx + 2, sy + 1, sx, sy - 4);
         break;
       }
       case "dots": {
         const n = Math.floor(now / 380) % 4;
-        for (let i = 0; i < n; i++) fb.box(102 + i * 7, 55, 106 + i * 7, 59);
+        for (let i = 0; i < n; i++) fb.box(103 + i * 7, 56, 107 + i * 7, 60);
         break;
       }
       case "question":
         fb.text("?", 112, 2 + Math.abs(Math.sin(now / 300)) * 3, 3);
         break;
       case "anger": {
-        const ax = 112;
-        const ay = 8;
-        fb.line(ax - 5, ay - 2, ax - 1, ay - 2, 1, 2);
-        fb.line(ax + 1, ay - 2, ax + 5, ay - 2, 1, 2);
-        fb.line(ax - 2, ay - 6, ax - 2, ay - 3, 1, 2);
-        fb.line(ax - 2, ay + 1, ax - 2, ay + 4, 1, 2);
-        fb.line(ax + 2, ay - 6, ax + 2, ay - 3, 1, 2);
-        fb.line(ax + 2, ay + 1, ax + 2, ay + 4, 1, 2);
+        const ax = 113;
+        const ay = 9;
+        for (const [x0, y0, x1, y1] of [
+          [-5, -2, -1, -2], [1, -2, 5, -2], [-2, -6, -2, -3], [-2, 1, -2, 4], [2, -6, 2, -3], [2, 1, 2, 4],
+        ]) fb.line(ax + x0, ay + y0, ax + x1, ay + y1, 1, 2);
         break;
       }
       case "shades":
-        for (const sx of [LEFT_X + dx, RIGHT_X + dx]) {
-          fb.box(sx - 17, EYE_Y - 7 + dy, sx + 17, EYE_Y + 6 + dy);
-          fb.ellipse(sx, EYE_Y + 6 + dy, 17, 6, true);
-          fb.line(sx - 10, EYE_Y + 5 + dy, sx - 4, EYE_Y - 3 + dy, 0, 2);
+        for (const [sx, sy] of [[lx, ly], [rx, ry]] as const) {
+          fb.box(sx - 15, sy - 8, sx + 15, sy + 5);
+          fb.ellipse(sx, sy + 5, 15, 5, true);
+          fb.line(sx - 9, sy + 4, sx - 3, sy - 4, 0, 2);
         }
-        fb.box(LEFT_X + 17 + dx, EYE_Y - 6 + dy, RIGHT_X - 17 + dx, EYE_Y - 3 + dy);
+        fb.box(lx + 14, ly - 7, rx - 14, ly - 4);
         break;
       case "sparkle": {
-        const s = 2 + Math.abs(Math.sin(now / 200)) * 2;
-        for (const [px, py] of [[lx - 20, EYE_Y - 14], [rx + 20, EYE_Y - 12]] as const) {
-          fb.line(px - s, py + dy, px + s, py + dy);
-          fb.line(px, py - s + dy, px, py + s + dy);
+        const k = 2 + Math.abs(Math.sin(now / 200)) * 2;
+        for (const [px, py] of [[lx - 22, ly - 12], [rx + 22, ry - 10]] as const) {
+          fb.line(px - k, py, px + k, py);
+          fb.line(px, py - k, px, py + k);
         }
         break;
       }
+      case "heart":
+        fb.heart(rx + 20, ry - 12 - ((now / 45) % 8), 8);
+        break;
     }
   }
 
-  /** Tiny status cues in the bottom-right corner (like a device LED). */
   private drawIndicators(now: number): void {
     const fb = this.fb;
-    if (this.mode === "listening") {
-      if (this.userTalking) {
-        for (let i = 0; i < 4; i++) {
-          const h = 2 + Math.abs(Math.sin(now / 90 + i * 1.3)) * 6;
-          fb.box(110 + i * 4, 62 - h, 112 + i * 4, 62);
-        }
-      } else if (Math.floor(now / 600) % 2 === 0) {
-        fb.ellipse(121, 58, 2, 2, true);
+    if (this.mode !== "listening") return;
+    if (this.userTalking) {
+      for (let i = 0; i < 4; i++) {
+        const h = 2 + Math.abs(Math.sin(now / 90 + i * 1.3)) * 6;
+        fb.box(110 + i * 4, 62 - h, 112 + i * 4, 62);
       }
+    } else if (Math.floor(now / 600) % 2 === 0) {
+      fb.ellipse(121, 58, 2, 2, true);
     }
   }
 }
 
-/** Sampled parabola: width `half*2`, `depth` > 0 bends down (smile), < 0 bends up (frown / ^). */
 function arc(cx: number, cy: number, half: number, depth: number): Array<[number, number]> {
   const pts: Array<[number, number]> = [];
   for (let i = -half; i <= half; i++) {
@@ -580,3 +583,4 @@ function arc(cx: number, cy: number, half: number, depth: number): Array<[number
   }
   return pts;
 }
+
