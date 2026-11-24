@@ -121,7 +121,7 @@ voice:
   end_silence_ms: 650        # silence that ends your sentence
   max_utterance_s: 25
   pre_roll_ms: 300           # audio kept from just before speech starts
-  barge_in: true             # interrupt AIVA by talking (needs echo cancellation)
+  barge_in: false            # interrupt AIVA by talking — only with headphones / good echo cancellation
   playback_lead_ms: 350      # how far ahead of real-time audio is sent to devices
 
 tools:

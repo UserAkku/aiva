@@ -45,13 +45,20 @@ export class DeviceClient {
   state: DeviceState = "offline";
   handsFree = false;
   muted = false;
+  /** server allows interrupting AIVA by voice (only sensible with headphones) */
+  bargeIn = false;
+  private deafUntil = 0;
 
   constructor(private readonly deviceId = DeviceClient.stableId()) {
     this.mic.onFrame = (pcm, peak) => {
-      this.emit("micLevel", peak);
-      if (this.muted || this.ws?.readyState !== WebSocket.OPEN) return;
-      // half-duplex safety: while speaking, only stream if the server can barge-in (we advertise AEC)
-      if (this.state === "listening" || this.state === "speaking") this.ws.send(pcm);
+      // half-duplex: while AIVA's voice is playing (and a moment after), the mic would mostly
+      // hear AIVA herself — don't send it unless the server explicitly allows barge-in
+      const playing = this.player.buffered > 0.02;
+      if (playing) this.deafUntil = performance.now() + 450;
+      const deaf = !this.bargeIn && (playing || performance.now() < this.deafUntil);
+      this.emit("micLevel", deaf ? 0 : peak);
+      if (this.muted || deaf || this.ws?.readyState !== WebSocket.OPEN) return;
+      if (this.state === "listening" || (this.bargeIn && this.state === "speaking")) this.ws.send(pcm);
     };
   }
 
@@ -174,6 +181,7 @@ export class DeviceClient {
     switch (msg.type) {
       case "hello":
         this.sessionId = msg.session_id;
+        this.bargeIn = !!msg.aiva?.barge_in;
         this.setState("idle");
         this.emit("animation", "wake_up");
         if (this.handsFree) this.send({ type: "listen", state: "start", mode: "auto" });

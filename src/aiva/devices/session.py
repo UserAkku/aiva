@@ -11,10 +11,12 @@ keeps listening while AIVA speaks; real speech interrupts her within ~lead_ms.
 from __future__ import annotations
 
 import asyncio
+import re
 import secrets
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
@@ -39,6 +41,31 @@ _STT_ERROR = {
     "english": "<embarrassed> Sorry, I couldn't hear that properly. Speech-to-text isn't working right now.",
 }
 _WAKE_ACK = {"hinglish": "<happy> जी? बोलिए!", "english": "<happy> Yes? I'm listening!"}
+
+
+def _normalise(text: str) -> str:
+    return re.sub(r"[^\w\s]", "", text.lower()).strip()
+
+
+def is_echo(heard: str, recent: list[str], threshold: float = 0.6) -> bool:
+    """True if a transcript is (mostly) a repeat of something AIVA just said."""
+    heard_n = _normalise(heard)
+    if len(heard_n) < 4:
+        return False
+    for said in recent:
+        said_n = _normalise(said)
+        if not said_n:
+            continue
+        if heard_n in said_n:
+            return True
+        if SequenceMatcher(None, heard_n, said_n).ratio() >= threshold:
+            return True
+        # partial echo: the transcript matches a chunk of a longer sentence
+        matcher = SequenceMatcher(None, said_n, heard_n)
+        match = matcher.find_longest_match(0, len(said_n), 0, len(heard_n))
+        if match.size >= max(8, int(len(heard_n) * 0.7)):
+            return True
+    return False
 
 
 class DeviceSession:
@@ -79,14 +106,17 @@ class DeviceSession:
             voice.pre_roll_ms,
             voice.max_utterance_s,
         )
+        # barge-in must beat AIVA's own (echo-cancelled) voice: far stricter than normal listening
         self._bargein_vad = VADSegmenter(
-            min(0.9, voice.vad_threshold + 0.2),
-            max(400, voice.min_speech_ms + 150),
+            min(0.92, voice.vad_threshold + 0.3),
+            max(650, voice.min_speech_ms + 400),
             voice.end_silence_ms,
             voice.pre_roll_ms,
             voice.max_utterance_s,
         )
         self._vad = self._normal_vad
+        self._deaf_until = 0.0  # ignore the mic briefly after AIVA stops (echo tail)
+        self._recent_speech: list[str] = []  # what AIVA said lately (echo guard for STT)
         self._manual_audio = bytearray()
         self._turn: asyncio.Task[None] | None = None
         self._speaker: Speaker | None = None
@@ -128,7 +158,8 @@ class DeviceSession:
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     async def start(self) -> None:
-        await self.send_json(protocol.server_hello(self.id, self.hello.audio.format, 24000, 60))
+        extras = {"barge_in": self._barge_in_enabled()} if self.hello.is_aiva else None
+        await self.send_json(protocol.server_hello(self.id, self.hello.audio.format, 24000, 60, extras))
         self.services.bus.publish("device.connected", device=self.device_id, session=self.id, kind=self.kind)
         logger.info("device {} connected ({}, {} audio)", self.device_id, self.kind, self.hello.audio.format)
 
@@ -171,6 +202,8 @@ class DeviceSession:
             logger.warning("bad audio frame: {}", exc)
             return
         if self.state == "listening":
+            if time.monotonic() < self._deaf_until and self.listen_mode != "manual":
+                return  # still hearing the tail of AIVA's own voice
             if self.listen_mode == "manual":
                 self._manual_audio += pcm
                 self._vad.feed(pcm)  # only for the level meter
@@ -283,6 +316,7 @@ class DeviceSession:
         try:
             await speaker.finish()
         finally:
+            self._remember_spoken(speaker)
             self._after_speaking()
 
     async def announce(self, text: str) -> None:
@@ -290,7 +324,12 @@ class DeviceSession:
         await self._not_busy.wait()
         await self.speak(text)
 
+    def _remember_spoken(self, speaker: Speaker | None) -> None:
+        if speaker is not None and speaker.spoken:
+            self._recent_speech = [*self._recent_speech, *speaker.spoken][-6:]
+
     def _after_speaking(self) -> None:
+        self._deaf_until = time.monotonic() + 0.7
         self._vad = self._normal_vad
         self._vad.reset()
         self.set_state("listening" if self.auto_listen else "idle")
@@ -320,6 +359,11 @@ class DeviceSession:
                     await self.send_json(protocol.emotion(self.id, Emotion.CONFUSED))
                     self._after_speaking()
                     return
+                if is_echo(text, self._recent_speech):
+                    logger.info("ignored echo of AIVA's own voice: {!r}", text[:80])
+                    services.bus.publish("stt.echo_ignored", device=self.device_id, text=text)
+                    self._after_speaking()
+                    return
                 await self.send_json(protocol.stt(self.id, text))
             assert text is not None
             self.last_user_text = text
@@ -335,6 +379,7 @@ class DeviceSession:
                 await speaker.abort()
             raise
         finally:
+            self._remember_spoken(speaker)
             self._speaker = None
         self._after_speaking()
 

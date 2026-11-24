@@ -109,7 +109,7 @@ class VoiceConfig(BaseModel):
     end_silence_ms: int = 650
     max_utterance_s: float = 25.0
     pre_roll_ms: int = 300
-    barge_in: bool = True
+    barge_in: bool = False
     playback_lead_ms: int = 350
 
 

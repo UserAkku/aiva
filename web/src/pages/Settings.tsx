@@ -145,7 +145,7 @@ export function SettingsPage({ onChange }: { onChange: () => void }) {
           <div className="mt-3 flex items-center justify-between">
             <div>
               <div className="text-[13px] text-zinc-200">Barge-in</div>
-              <div className="text-[12px] text-zinc-500">Interrupt AIVA by talking over her (needs echo cancellation).</div>
+              <div className="text-[12px] text-zinc-500">Interrupt AIVA by talking over her. Use only with headphones — laptop speakers make her hear herself.</div>
             </div>
             <Toggle checked={form.voice.barge_in} onChange={(v) => set("voice.barge_in", v)} />
           </div>

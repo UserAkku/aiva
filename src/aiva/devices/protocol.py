@@ -62,8 +62,10 @@ class DeviceHello:
         return bool(self.features.get("aec"))
 
 
-def server_hello(session_id: str, fmt: AudioFormat, sample_rate: int, frame_ms: int) -> dict[str, Any]:
-    return {
+def server_hello(
+    session_id: str, fmt: AudioFormat, sample_rate: int, frame_ms: int, aiva: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    msg: dict[str, Any] = {
         "type": "hello",
         "transport": "websocket",
         "session_id": session_id,
@@ -74,6 +76,9 @@ def server_hello(session_id: str, fmt: AudioFormat, sample_rate: int, frame_ms: 
             "frame_duration": frame_ms,
         },
     }
+    if aiva is not None:  # extension for AIVA devices (ignored by the xiaozhi firmware)
+        msg["aiva"] = aiva
+    return msg
 
 
 def stt(session_id: str, text: str) -> dict[str, Any]:

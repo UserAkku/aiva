@@ -16,7 +16,7 @@ const HINT: Record<string, string> = {
   idle: "Hold the orb or press Space and talk",
   listening: "I'm listening — speak naturally",
   thinking: "Thinking it through…",
-  speaking: "Speaking — talk over me to interrupt",
+  speaking: "Speaking — hold the orb or press Stop to interrupt",
 };
 
 export function LivePage({ status }: { status: Status | null }) {
@@ -86,7 +86,9 @@ export function LivePage({ status }: { status: Status | null }) {
 
         <div className="flex flex-col items-center gap-1 text-center">
           <div className="font-mono text-[11px] uppercase tracking-[0.32em] text-[rgb(var(--state))]">{state}</div>
-          <div className="text-[15px] text-zinc-400">{HINT[state]}</div>
+          <div className="text-[15px] text-zinc-400">
+            {state === "speaking" && client.bargeIn ? "Speaking — just talk over me to interrupt" : HINT[state]}
+          </div>
         </div>
 
         <div className="mx-auto w-full max-w-[620px]">

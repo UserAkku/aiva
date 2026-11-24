@@ -103,3 +103,13 @@ def test_voice_turn_detected_by_vad(services: Services) -> None:
     assert vad and vad[0]["speaking"] is True
     assert any(m["type"] == "stt" and "count" in m["text"] for m in messages)
     assert frames > 0
+
+
+def test_echo_guard_recognises_aiva_hearing_herself() -> None:
+    from aiva.devices.session import is_echo
+
+    said = ["नमस्ते! मैं AIVA हूँ, आपकी desk buddy.", "आज Delhi में मौसम साफ़ है, तापमान लगभग 18 डिग्री।"]
+    assert is_echo("मैं AIVA हूँ आपकी desk buddy", said)
+    assert is_echo("आज Delhi में मौसम साफ़ है", said)
+    assert not is_echo("मेरा शहर सोनीपत है, वहाँ का AQI बताओ", said)
+    assert not is_echo("hi", said)
